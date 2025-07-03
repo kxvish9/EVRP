@@ -6,9 +6,9 @@ main
 *.o
 
 # Generated directories
-/stats/
-/tours/
-/plots/
+stats/
+tours/
+plots/
 
 # VSCode specific
 .vscode/
