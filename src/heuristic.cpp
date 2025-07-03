@@ -4,7 +4,8 @@
 #include <cmath>
 #include <algorithm>
 #include <iostream>
-
+#include <random>      // For std::mt19937
+#include <chrono>      // For seeding the random number generator
 using namespace std;
 
 // Global solution object, declared in heuristic.hpp
@@ -34,7 +35,6 @@ static void create_initial_solution() {
         int next_node = -1;
         double min_dist = DBL_MAX;
 
-        // Find the nearest unvisited customer
         for (int i = 1; i <= NUM_OF_CUSTOMERS; i++) {
             if (!visited[i]) {
                 double dist = get_distance(last_node, i);
@@ -50,24 +50,25 @@ static void create_initial_solution() {
             visited[next_node] = true;
             customers_visited++;
         } else {
-            // Should not happen if there are unvisited customers
             break;
         }
     }
     best_sol->tour[best_sol->steps++] = DEPOT;
     best_sol->tour_length = fitness_evaluation(best_sol->tour, best_sol->steps);
 
-    // Handle case where initial solution is infeasible
     if (best_sol->tour_length >= DBL_MAX) {
-        cout << "Error: Initial greedy solution is infeasible. Consider a random approach." << endl;
-        // As a fallback, create a simple random permutation
+        cout << "Error: Initial greedy solution is infeasible. Using random shuffle fallback." << endl;
         for(int i=0; i<NUM_OF_CUSTOMERS; i++) best_sol->tour[i+1] = i+1;
-        random_shuffle(&best_sol->tour[1], &best_sol->tour[NUM_OF_CUSTOMERS+1]);
+        
+        // This is the updated, modern way to shuffle
+        unsigned seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        std::mt19937 g(seed);
+        std::shuffle(&best_sol->tour[1], &best_sol->tour[NUM_OF_CUSTOMERS+1], g);
+
         best_sol->steps = NUM_OF_CUSTOMERS + 2;
         best_sol->tour_length = fitness_evaluation(best_sol->tour, best_sol->steps);
     }
 }
-
 
 // --- Main Heuristic Functions ---
 
