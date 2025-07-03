@@ -1,0 +1,14 @@
+# Compiled executables
+*.exe
+main
+
+# Object files
+*.o
+
+# Generated directories
+/stats/
+/tours/
+/plots/
+
+# VSCode specific
+.vscode/
