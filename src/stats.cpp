@@ -8,10 +8,11 @@
 #include<fstream>
 #include<time.h>
 #include<limits.h>
-
+#include <direct.h> // For _mkdir on Windows
+#include <filesystem>
 #include "EVRP.hpp"
 #include "stats.hpp"
-
+#include "heuristic.hpp"
 using namespace std;
 
 //Used to output offline performance and population diversity
@@ -21,24 +22,41 @@ FILE *log_performance;
 char *perf_filename;
 
 double* perf_of_trials;
+const char* get_base_filename(const char* path) {
+    const char* slash = strrchr(path, '/');
+    const char* backslash = strrchr(path, '\\');
+    if (slash && backslash) {
+        return (slash > backslash) ? slash + 1 : backslash + 1;
+    }
+    if (slash) return slash + 1;
+    if (backslash) return backslash + 1;
+    return path;
+}
+void open_stats(void) {
+    // Debug message to confirm the function is called
+    printf("DEBUG: open_stats() function called.\n");
 
-void open_stats(void){
-    //Initialize
+    // Initialize performance tracker
     perf_of_trials = new double[MAX_TRIALS];
-
-    for(int i =0; i < MAX_TRIALS; i++){
+    for (int i = 0; i < MAX_TRIALS; i++) {
         perf_of_trials[i] = 0.0;
     }
 
+    // Create the 'stats' directory if it doesn't exist
+    mkdir("stats");
 
-  //initialize and open output files
-  perf_filename = new char[CHAR_LEN];
-  sprintf(perf_filename, "stats.%s.txt",
-	 problem_instance);
-  //for performance
-  if ((log_performance = fopen(perf_filename,"a")) == NULL) { exit(2); }
-  //initialize and open output files
+    // Prepare filename for the output file
+    perf_filename = new char[CHAR_LEN];
+    const char* base_name = get_base_filename(problem_instance);
+    sprintf(perf_filename, "stats/%s.txt", base_name);
 
+    // Open the output file and check for errors
+    if ((log_performance = fopen(perf_filename, "a")) == NULL) {
+        printf("DEBUG: ERROR - Could not open %s\n", perf_filename);
+        exit(2);
+    } else {
+        printf("DEBUG: %s opened successfully.\n", perf_filename);
+    }
 }
 
 
@@ -97,10 +115,31 @@ double worst_of_vector(double *values, int l ) {
   }
   return max;
 }
+void save_tour(const char* filename_prefix, int run_number) {
+    // Create a directory for the tour files if it doesn't exist
+    _mkdir("tours");
+
+    // Create the full filename
+    char tour_filename[CHAR_LEN];
+    sprintf(tour_filename, "tours/run-%d-%s.tour", run_number, filename_prefix);
+
+    FILE* tour_file = fopen(tour_filename, "w");
+    if (tour_file == NULL) {
+        printf("ERROR: Could not open tour file %s\n", tour_filename);
+        return;
+    }
+
+    // Write the tour to the file
+    for (int i = 0; i < best_sol->steps; i++) {
+        fprintf(tour_file, "%d ", best_sol->tour[i]);
+    }
+
+    fclose(tour_file);
+    printf("Tour for run %d saved to %s\n", run_number, tour_filename);
+}
 
 
-
-void close_stats(void){
+void close_stats(int run){
   int i,j;
   double perf_mean_value, perf_stdev_value;
  
@@ -122,7 +161,8 @@ void close_stats(void){
   fprintf(log_performance,"\n");
   fprintf(log_performance, "Max: %f\t ", worst_of_vector(perf_of_trials,MAX_TRIALS));
   fprintf(log_performance,"\n");
-
+  const char* base_name = get_base_filename(problem_instance);
+  save_tour(base_name, run);
 
   fclose(log_performance);
  
@@ -134,7 +174,7 @@ void free_stats(){
 
   //free memory
   delete[] perf_of_trials;
-
+  delete[] perf_filename;
 }
 
 

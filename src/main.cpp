@@ -70,9 +70,10 @@ int main(int argc, char *argv[]) {
       The implementation is only for your reference*/
      /*Step 5*/
       end_run(run);  //store the best solution quality for each run
+      close_stats(run); // Pass the current run number
   }
   /*Step 6*/
-  close_stats(); //close text files to calculate the mean result from the 20 runs stats.h
+  close_stats(run); //close text files to calculate the mean result from the 20 runs stats.h
 
 
   //free memory

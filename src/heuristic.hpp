@@ -1,4 +1,4 @@
-
+#include "stats.hpp"
 
 struct solution{
   int *tour;	//this is what the fitness_evaluation function in EVRP.hpp will evaluate
