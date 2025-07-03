@@ -43,15 +43,17 @@ void open_stats(void) {
     }
 
     // Create the 'stats' directory if it doesn't exist
-    mkdir("stats");
-
-    // Prepare filename for the output file
-    perf_filename = new char[CHAR_LEN];
     const char* base_name = get_base_filename(problem_instance);
-    sprintf(perf_filename, "stats/%s.txt", base_name);
+    char stats_dir[CHAR_LEN];
+    sprintf(stats_dir, "stats/%s", base_name);
+    _mkdir("stats");
+    _mkdir(stats_dir); // Create the problem-specific subdirectory
 
-    // Open the output file and check for errors
-    if ((log_performance = fopen(perf_filename, "a")) == NULL) {
+    perf_filename = new char[CHAR_LEN];
+    sprintf(perf_filename, "%s/results.txt", stats_dir);
+
+    // Open the file in "write" mode ("w") to overwrite it each time
+    if ((log_performance = fopen(perf_filename, "w")) == NULL) {
         printf("DEBUG: ERROR - Could not open %s\n", perf_filename);
         exit(2);
     } else {
@@ -117,11 +119,14 @@ double worst_of_vector(double *values, int l ) {
 }
 void save_tour(const char* filename_prefix, int run_number) {
     // Create a directory for the tour files if it doesn't exist
+    char tour_dir[CHAR_LEN];
+    sprintf(tour_dir, "tours/%s", filename_prefix);
     _mkdir("tours");
+    _mkdir(tour_dir); // Create the problem-specific subdirectory
 
-    // Create the full filename
     char tour_filename[CHAR_LEN];
-    sprintf(tour_filename, "tours/run-%d-%s.tour", run_number, filename_prefix);
+    // Save the tour file inside the new subdirectory
+    sprintf(tour_filename, "%s/run-%d.tour", tour_dir, run_number);
 
     FILE* tour_file = fopen(tour_filename, "w");
     if (tour_file == NULL) {
@@ -129,9 +134,8 @@ void save_tour(const char* filename_prefix, int run_number) {
         return;
     }
 
-    // Write the tour to the file
-    for (int i = 0; i < best_sol->steps; i++) {
-        fprintf(tour_file, "%d ", best_sol->tour[i]);
+    for (int i = 0; i < sol->steps; i++) {
+        fprintf(tour_file, "%d ", sol->tour[i]);
     }
 
     fclose(tour_file);
