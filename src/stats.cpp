@@ -117,15 +117,17 @@ double worst_of_vector(double *values, int l ) {
   }
   return max;
 }
-void save_tour(const char* filename_prefix, int run_number) {
+void save_tour(solution* sol, const char* filename_prefix, int run_number) {
     // Create a directory for the tour files if it doesn't exist
+    _mkdir("tours");
+
+    // Create the problem-specific subdirectory
     char tour_dir[CHAR_LEN];
     sprintf(tour_dir, "tours/%s", filename_prefix);
-    _mkdir("tours");
-    _mkdir(tour_dir); // Create the problem-specific subdirectory
+    _mkdir(tour_dir);
 
+    // Create the full filename
     char tour_filename[CHAR_LEN];
-    // Save the tour file inside the new subdirectory
     sprintf(tour_filename, "%s/run-%d.tour", tour_dir, run_number);
 
     FILE* tour_file = fopen(tour_filename, "w");
@@ -134,43 +136,42 @@ void save_tour(const char* filename_prefix, int run_number) {
         return;
     }
 
+    // Write the tour to the file
     for (int i = 0; i < sol->steps; i++) {
         fprintf(tour_file, "%d ", sol->tour[i]);
     }
 
     fclose(tour_file);
-    printf("Tour for run %d saved to %s\n", run_number, tour_filename);
+    // This line is optional, you can remove it if you don't want the console message
+    // printf("Tour for run %d saved to %s\n", run_number, tour_filename); 
 }
 
 
 void close_stats(int run){
-  int i,j;
-  double perf_mean_value, perf_stdev_value;
- 
-  //For statistics
-  for(i = 0; i < MAX_TRIALS; i++){
-    //cout << i << " " << perf_of_trials[i] << endl;
-    //cout << i << " " << time_of_trials[i] << endl;
-    fprintf(log_performance, "%.2f", perf_of_trials[i]);
+    int i,j;
+    double perf_mean_value, perf_stdev_value;
+
+    //For statistics
+    for(i = 0; i < MAX_TRIALS; i++){
+        fprintf(log_performance, "%.2f", perf_of_trials[i]);
+        fprintf(log_performance,"\n");
+    }
+
+    perf_mean_value = mean(perf_of_trials,MAX_TRIALS);
+    perf_stdev_value = stdev(perf_of_trials,MAX_TRIALS,perf_mean_value);
+    fprintf(log_performance,"Mean %f\t ",perf_mean_value);
+    fprintf(log_performance,"\tStd Dev %f\t ",perf_stdev_value);
+    fprintf(log_performance,"\n");
+    fprintf(log_performance, "Min: %f\t ", best_of_vector(perf_of_trials,MAX_TRIALS));
+    fprintf(log_performance,"\n");
+    fprintf(log_performance, "Max: %f\t ", worst_of_vector(perf_of_trials,MAX_TRIALS));
     fprintf(log_performance,"\n");
 
-  }
+    // This is the updated call to save_tour
+    const char* base_name = get_base_filename(problem_instance);
+    save_tour(best_sol, base_name, run);
 
-  perf_mean_value = mean(perf_of_trials,MAX_TRIALS);
-  perf_stdev_value = stdev(perf_of_trials,MAX_TRIALS,perf_mean_value);
-  fprintf(log_performance,"Mean %f\t ",perf_mean_value);
-  fprintf(log_performance,"\tStd Dev %f\t ",perf_stdev_value);
-  fprintf(log_performance,"\n");
-  fprintf(log_performance, "Min: %f\t ", best_of_vector(perf_of_trials,MAX_TRIALS));
-  fprintf(log_performance,"\n");
-  fprintf(log_performance, "Max: %f\t ", worst_of_vector(perf_of_trials,MAX_TRIALS));
-  fprintf(log_performance,"\n");
-  const char* base_name = get_base_filename(problem_instance);
-  save_tour(base_name, run);
-
-  fclose(log_performance);
- 
-
+    fclose(log_performance);
 }
 
 
