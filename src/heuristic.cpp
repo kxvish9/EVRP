@@ -19,7 +19,7 @@ static double T = 1000.0; // Temperature
 
 // --- Helper Functions ---
 static void two_opt_swap(int* tour, int size, int i, int j) {
-    std::reverse(tour + i, tour + j);
+    std::reverse(tour + i, tour + j + 1);
 }
 
 // Creates a valid, feasible initial tour to start the search
@@ -88,10 +88,12 @@ void run_heuristic() {
         int idx1 = 1 + rand() % (current_tour_size - 2);
         int idx2 = 1 + rand() % (current_tour_size - 2);
 
-        if (abs(idx1 - idx2) < 2) {
-             delete[] neighbor_tour;
-             continue;
+        // Ensure the indices are different. Keep trying until they are.
+        while (idx1 == idx2) {
+            idx2 = 1 + rand() % (current_tour_size - 2);
         }
+
+        // Ensure idx1 is smaller than idx2
         if (idx1 > idx2) std::swap(idx1, idx2);
         
         two_opt_swap(neighbor_tour, current_tour_size, idx1, idx2);
