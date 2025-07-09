@@ -13,7 +13,6 @@ using namespace std;
 void start_run(int r){
 
   srand(r); //random seed
-  init_evals();
   init_current_best();
   cout << "Run: " << r << " with random seed " << r << endl;
 }
@@ -51,7 +50,7 @@ int main(int argc, char *argv[]) {
 
     /*Step 2*/
     open_stats(); //open text files to store the best values from the 20 runs stats.h
-
+    init_evals(); // Initialize the counter once before all runs
     for(run = 1; run <= MAX_TRIALS; run++){
         /*Step 3*/   
         start_run(run);
