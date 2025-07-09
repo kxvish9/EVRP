@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <iostream>
 #include <random>      // For std::mt19937
-#include <chrono>      // For seeding the random number generator
+#include <chrono>
+#include <stdio.h>    
+#include <vector>  // For seeding the random number generator
 using namespace std;
 
 // Global solution object, declared in heuristic.hpp
@@ -30,19 +32,23 @@ static void create_initial_solution() {
     best_sol->steps = 1;
 
     // Create a list of all customer IDs (from 2 to NUM_OF_CUSTOMERS + 1)
-    int customers[NUM_OF_CUSTOMERS];
+    // Use a std::vector to safely handle the customer list
+    std::vector<int> customers;
     for (int i = 0; i < NUM_OF_CUSTOMERS; i++) {
+        customers.push_back(i + 1); 
+    }
+    for (size_t i = 0; i < customers.size(); ++i) {
         customers[i] = i + 2;
     }
 
-    // Shuffle the customer list to create a random but complete tour
+    // Shuffle the customer list
     unsigned seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
     std::mt19937 g(seed);
-    std::shuffle(customers, customers + NUM_OF_CUSTOMERS, g);
-    
+    std::shuffle(customers.begin(), customers.end(), g);
+
     // Append the shuffled customers to the tour
-    for (int i = 0; i < NUM_OF_CUSTOMERS; i++) {
-        best_sol->tour[best_sol->steps++] = customers[i];
+    for (int customer_id : customers) {
+        best_sol->tour[best_sol->steps++] = customer_id;
     }
     
     // End the tour at the depot
@@ -60,19 +66,27 @@ static void create_initial_solution() {
 // --- Main Heuristic Functions ---
 
 void initialize_heuristic() {
-    best_sol = new solution;
-    best_sol->tour = new int[ACTUAL_PROBLEM_SIZE * 2];
+    // This check ensures memory is allocated only ONCE for the entire program execution.
+    if (best_sol == nullptr) {
+        printf("[DEBUG] HEURISTIC: First run, allocating memory...\n");
+        best_sol = new solution;
+        best_sol->tour = new int[ACTUAL_PROBLEM_SIZE * 2];
+        current_tour = new int[ACTUAL_PROBLEM_SIZE * 2];
+    }
+
+    // This part will now run at the beginning of every trial, resetting the state.
+    printf("[DEBUG] HEURISTIC: Initializing for new run...\n");
 
     create_initial_solution();
-
-    // Initialize the state for the current run
+    
     current_tour_size = best_sol->steps;
-    current_tour = new int[current_tour_size];
     std::copy(best_sol->tour, best_sol->tour + current_tour_size, current_tour);
     current_energy = best_sol->tour_length;
     
     // Reset temperature for the start of a new run
     T = 1000.0;
+    
+    printf("[DEBUG] HEURISTIC: Initialization complete. Tour size: %d, Energy: %.2f\n", current_tour_size, current_energy);
 }
 // This new function attempts to repair an infeasible tour by inserting a charging station.
 // It returns 'true' if the repair was successful, and 'false' otherwise.
@@ -86,6 +100,7 @@ static bool repair_tour(int* tour, int& size) {
 
         // Check if the move to the next node is feasible
         if (current_energy + get_energy_consumption(from, to) > BATTERY_CAPACITY) {
+            printf("[DEBUG] REPAIR: Infeasibility found at index %d. From %d to %d.\n", i, from, to); // <-- ADD
             // Infeasibility detected! We need to insert a charging station before node 'to'.
             int best_cs = -1;
             double min_detour = DBL_MAX;
@@ -104,8 +119,8 @@ static bool repair_tour(int* tour, int& size) {
             if (best_cs != -1) {
                 // We found a charging station to insert.
                 // Make space for the new node in the tour array.
-                for (int j = size; j > i; j--) {
-                    tour[j] = tour[j - 1];
+                for (int j = size - 1; j > i; j--) {
+                    tour[j + 1] = tour[j];
                 }
                 // Insert the station and update the tour size.
                 tour[i + 1] = best_cs;
@@ -164,7 +179,7 @@ void run_heuristic() {
     int iterations_per_call = 100; // Perform 100 swaps per call to run_heuristic
 
     for (int i = 0; i < iterations_per_call; ++i) {
-        int* neighbor_tour = new int[current_tour_size];
+        int* neighbor_tour = new int[ACTUAL_PROBLEM_SIZE * 2];
         std::copy(current_tour, current_tour + current_tour_size, neighbor_tour);
         
         // Generate two random, distinct indices for the 2-Opt swap
@@ -178,7 +193,8 @@ void run_heuristic() {
 
         // Ensure idx1 is smaller than idx2
         if (idx1 > idx2) std::swap(idx1, idx2);
-        
+        printf("[DEBUG] RUN: Iteration %d, T=%.2f. Swapping %d and %d in tour of size %d.\n", i, T, idx1, idx2); // <-- ADD
+
         two_opt_swap(neighbor_tour, current_tour_size, idx1, idx2);
 
         // This is the new size of the neighbor tour after potential repairs.
