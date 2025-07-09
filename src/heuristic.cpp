@@ -22,26 +22,7 @@ static void two_opt_swap(int* tour, int size, int i, int j) {
     std::reverse(tour + i, tour + j + 1);
 }
 // This function checks validity, tries to repair if needed, and returns the final cost.
-static double get_solution_cost(int* tour, int& size) {
-    int original_size = size;
-    // Create a temporary copy to attempt repairs on.
-    int* temp_tour = new int[ACTUAL_PROBLEM_SIZE * 2];
-    std::copy(tour, tour + size, temp_tour);
 
-    if (repair_tour(temp_tour, size)) {
-        // Repair was successful.
-        double final_dist = fitness_evaluation(temp_tour, size);
-        // Copy the repaired tour back to the original.
-        std::copy(temp_tour, temp_tour + size, tour);
-        delete[] temp_tour;
-        return final_dist;
-    } else {
-        // Repair failed. The solution is invalid.
-        size = original_size; // Restore original size.
-        delete[] temp_tour;
-        return DBL_MAX;
-    }
-}
 // Creates a valid, feasible initial tour to start the search
 static void create_initial_solution() {
     // Start at the depot
@@ -156,6 +137,25 @@ static bool repair_tour(int* tour, int& size) {
     }
 
     return true; // The entire tour is now feasible.
+}
+static double get_solution_cost(int* tour, int& size) {
+    int original_size = size;
+    int* temp_tour = new int[ACTUAL_PROBLEM_SIZE * 2];
+    std::copy(tour, tour + size, temp_tour);
+
+    if (repair_tour(temp_tour, size)) {
+        // Repair was successful.
+        double final_dist = fitness_evaluation(temp_tour, size);
+        // Copy the repaired tour back to the original.
+        std::copy(temp_tour, temp_tour + size, tour);
+        delete[] temp_tour;
+        return final_dist;
+    } else {
+        // Repair failed. The solution is invalid.
+        size = original_size; // Restore original size.
+        delete[] temp_tour;
+        return DBL_MAX; // <-- This return statement was missing
+    }
 }
 void run_heuristic() {
     // This function now performs a small batch of SA iterations each time it's called.
