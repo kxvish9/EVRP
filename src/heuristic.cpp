@@ -21,7 +21,27 @@ static double T = 1000.0; // Temperature
 static void two_opt_swap(int* tour, int size, int i, int j) {
     std::reverse(tour + i, tour + j + 1);
 }
+// This function checks validity, tries to repair if needed, and returns the final cost.
+static double get_solution_cost(int* tour, int& size) {
+    int original_size = size;
+    // Create a temporary copy to attempt repairs on.
+    int* temp_tour = new int[ACTUAL_PROBLEM_SIZE * 2];
+    std::copy(tour, tour + size, temp_tour);
 
+    if (repair_tour(temp_tour, size)) {
+        // Repair was successful.
+        double final_dist = fitness_evaluation(temp_tour, size);
+        // Copy the repaired tour back to the original.
+        std::copy(temp_tour, temp_tour + size, tour);
+        delete[] temp_tour;
+        return final_dist;
+    } else {
+        // Repair failed. The solution is invalid.
+        size = original_size; // Restore original size.
+        delete[] temp_tour;
+        return DBL_MAX;
+    }
+}
 // Creates a valid, feasible initial tour to start the search
 static void create_initial_solution() {
     // Start at the depot
@@ -73,7 +93,70 @@ void initialize_heuristic() {
     // Reset temperature for the start of a new run
     T = 1000.0;
 }
+// This new function attempts to repair an infeasible tour by inserting a charging station.
+// It returns 'true' if the repair was successful, and 'false' otherwise.
+static bool repair_tour(int* tour, int& size) {
+    double current_demand = 0.0;
+    double current_energy = 0.0;
 
+    for (int i = 0; i < size - 1; i++) {
+        int from = tour[i];
+        int to = tour[i + 1];
+
+        // Check if the move to the next node is feasible
+        if (current_energy + get_energy_consumption(from, to) > BATTERY_CAPACITY) {
+            // Infeasibility detected! We need to insert a charging station before node 'to'.
+            int best_cs = -1;
+            double min_detour = DBL_MAX;
+
+            // Find the best charging station to insert.
+            for (int cs_id = NUM_OF_CUSTOMERS + 2; cs_id <= ACTUAL_PROBLEM_SIZE; cs_id++) {
+                if (get_energy_consumption(from, cs_id) <= current_energy) { // Can we reach the station?
+                    double detour_dist = get_distance(from, cs_id) + get_distance(cs_id, to) - get_distance(from, to);
+                    if (detour_dist < min_detour) {
+                        min_detour = detour_dist;
+                        best_cs = cs_id;
+                    }
+                }
+            }
+
+            if (best_cs != -1) {
+                // We found a charging station to insert.
+                // Make space for the new node in the tour array.
+                for (int j = size; j > i; j--) {
+                    tour[j] = tour[j - 1];
+                }
+                // Insert the station and update the tour size.
+                tour[i + 1] = best_cs;
+                size++;
+                
+                // After inserting, we reset energy as if we recharged.
+                current_energy = 0.0;
+                // We also need to re-evaluate from the newly inserted station.
+                // The 'i' counter in the main loop will now process the move from 'best_cs' to 'to'.
+            } else {
+                // If no suitable charging station can be found to fix the route.
+                return false; // Repair failed.
+            }
+        }
+        
+        // Update energy and demand as before
+        current_energy += get_energy_consumption(from, to);
+        if (to == DEPOT) {
+            current_demand = 0.0;
+            current_energy = 0.0;
+        } else {
+            current_demand += get_customer_demand(to);
+        }
+
+        // The capacity check remains as a hard constraint. We can't easily "repair" it.
+        if (current_demand > MAX_CAPACITY) {
+            return false; // Repair failed.
+        }
+    }
+
+    return true; // The entire tour is now feasible.
+}
 void run_heuristic() {
     // This function now performs a small batch of SA iterations each time it's called.
     
@@ -97,16 +180,21 @@ void run_heuristic() {
         if (idx1 > idx2) std::swap(idx1, idx2);
         
         two_opt_swap(neighbor_tour, current_tour_size, idx1, idx2);
-        double neighbor_energy = fitness_evaluation(neighbor_tour, current_tour_size);
+
+        // This is the new size of the neighbor tour after potential repairs.
+        int neighbor_tour_size = current_tour_size; 
+        double neighbor_energy = get_solution_cost(neighbor_tour, neighbor_tour_size);
 
         if (neighbor_energy < DBL_MAX) {
             if (neighbor_energy < current_energy) {
-                std::copy(neighbor_tour, neighbor_tour + current_tour_size, current_tour);
+                current_tour_size = neighbor_tour_size;
+                std::copy(neighbor_tour, neighbor_tour + neighbor_tour_size, current_tour);
                 current_energy = neighbor_energy;
             } else {
                 double acceptance_prob = exp((current_energy - neighbor_energy) / T);
                 if ((double)rand() / RAND_MAX < acceptance_prob) {
-                    std::copy(neighbor_tour, neighbor_tour + current_tour_size, current_tour);
+                    current_tour_size = neighbor_tour_size;
+                    std::copy(neighbor_tour, neighbor_tour + neighbor_tour_size, current_tour);
                     current_energy = neighbor_energy;
                 }
             }
