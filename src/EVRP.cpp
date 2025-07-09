@@ -30,7 +30,6 @@ int MAX_CAPACITY;           //capacity of vehicles
 int MIN_VEHICLES;
 
 
-
 double evals;
 double current_best;
 

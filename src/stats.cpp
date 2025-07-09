@@ -65,7 +65,9 @@ void open_stats(void) {
 void get_mean(int r, double value) {
 
   perf_of_trials[r] = value;
-
+  // Save the tour at the end of each run
+    const char* base_name = get_base_filename(problem_instance);
+    save_tour(best_sol, base_name, r + 1); // r is 0-indexed, so we add 1 for file naming
 }
 
 
@@ -167,8 +169,7 @@ void close_stats(int run) {
     }
 
     // Save the final tour from the last run for visualization
-    const char* base_name = get_base_filename(problem_instance);
-    save_tour(best_sol, base_name, run);
+
 }
 
 

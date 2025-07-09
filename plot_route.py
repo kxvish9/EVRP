@@ -15,23 +15,19 @@ def parse_evrp_file(filepath):
         print(f"Error: A required section was not found - {e}")
         sys.exit(1)
 
-    # Read coordinates
     for i in range(coord_start, demand_start - 1):
         parts = lines[i].strip().split()
         node_id, x, y = int(parts[0]), float(parts[1]), float(parts[2])
         nodes[node_id] = {'x': x, 'y': y, 'type': 'customer'}
 
-    # Identify depot
     nodes[1]['type'] = 'depot'
 
-    # Correctly handle STATIONS_COORD_SECTION
     try:
-        # Use the correct section header from your file
         station_start = lines.index("STATIONS_COORD_SECTION") + 1
         for i in range(station_start, len(lines)):
             parts = lines[i].strip().split()
             if not parts or not parts[0].isdigit():
-                break # Stop if we hit a non-station line like DEPOT_SECTION
+                break
             station_id = int(parts[0])
             if station_id in nodes:
                 nodes[station_id]['type'] = 'station'
@@ -41,18 +37,33 @@ def parse_evrp_file(filepath):
     return nodes
 
 def parse_tour_file(filepath):
-    """Parses the .tour file, ignoring any '0' values."""
+    """Parses the .tour file, handles depot ID, and splits into sub-routes."""
     with open(filepath, 'r') as f:
         tour_str = f.read().strip().split()
-    return [int(node) for node in tour_str if int(node) != 0]
+    
+    # Replace 0 with 1 for the depot and convert to integers
+    full_tour = [1 if node == '0' else int(node) for node in tour_str]
+    
+    # Split the full tour into sub-routes based on the depot ID (1)
+    sub_routes = []
+    current_route = [1] # Start the first route at the depot
+    for node_id in full_tour[1:]: # Start from the second element
+        current_route.append(node_id)
+        if node_id == 1:
+            if len(current_route) > 2: # Ensure it's a valid route
+                sub_routes.append(current_route)
+            current_route = [1] # Start the next route
+            
+    return sub_routes
 
 def plot_evrp_route(problem_file, tour_file):
-    """Plots the EVRP route."""
+    """Plots the EVRP solution with multiple routes."""
     nodes = parse_evrp_file(problem_file)
-    tour = parse_tour_file(tour_file)
+    sub_routes = parse_tour_file(tour_file)
 
-    plt.figure(figsize=(12, 8))
+    plt.figure(figsize=(14, 10))
 
+    # Plot all nodes first
     for node_id, data in nodes.items():
         if data['type'] == 'depot':
             plt.plot(data['x'], data['y'], 'ks', markersize=12, label='Depot')
@@ -62,24 +73,12 @@ def plot_evrp_route(problem_file, tour_file):
             plt.plot(data['x'], data['y'], 'bo', markersize=8, label='Customer' if 'Customer' not in plt.gca().get_legend_handles_labels()[1] else "")
         plt.text(data['x'], data['y'] + 1.5, str(node_id), fontsize=9, ha='center')
 
-    sub_routes = []
-    current_route = []
-    if tour:
-        if tour[0] != 1:
-            tour.insert(0, 1)
-        for node_id in tour:
-            current_route.append(node_id)
-            if node_id == 1 and len(current_route) > 1:
-                sub_routes.append(current_route)
-                current_route = [1]
-        if len(current_route) > 1:
-            sub_routes.append(current_route)
-            
+    # Plot each sub-route with a different color
     for i, route in enumerate(sub_routes):
         route_x = [nodes[node_id]['x'] for node_id in route]
         route_y = [nodes[node_id]['y'] for node_id in route]
-        color = plt.cm.viridis(i / max(1, len(sub_routes)))
-        plt.plot(route_x, route_y, color=color, linestyle='-', marker='o', markersize=3)
+        color = plt.cm.viridis(i / max(1, len(sub_routes))) # Use a colormap for distinct colors
+        plt.plot(route_x, route_y, color=color, linestyle='-', marker='o', markersize=4, label=f'Route {i+1}')
 
     plt.title(f'EVRP Solution for {os.path.basename(problem_file)}')
     plt.xlabel('X Coordinate')
@@ -91,11 +90,10 @@ def plot_evrp_route(problem_file, tour_file):
     plt.legend(by_label.values(), by_label.keys())
     
     plot_filename = os.path.splitext(os.path.basename(tour_file))[0] + '.png'
-    save_path = os.path.join('../plots', plot_filename)
+    save_path = os.path.join('../plots', os.path.splitext(os.path.basename(problem_file))[0], plot_filename)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path)
     print(f"Plot saved to {save_path}")
-    # plt.show() # This line is removed to prevent the script from hanging
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:

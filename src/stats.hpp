@@ -6,5 +6,6 @@
 void open_stats(void);									//creates the output file
 void close_stats(int run);								//stores the best values for each run
 void get_mean(int r, double value);						//stores the observation from each run
-void free_stats();										//free memory
+void free_stats();	
+void save_tour(solution* sol, const char* filename_prefix, int run_number);									//free memory
 #endif // STATS_HPP

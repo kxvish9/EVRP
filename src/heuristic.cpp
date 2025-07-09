@@ -7,7 +7,7 @@
 #include <random>      // For std::mt19937
 #include <chrono>
 #include <stdio.h>    
-#include <vector>  // For seeding the random number generator
+#include <vector> // For seeding the random number generator
 using namespace std;
 
 // Global solution object, declared in heuristic.hpp
@@ -31,48 +31,56 @@ static void create_initial_solution() {
     best_sol->tour[0] = DEPOT;
     best_sol->steps = 1;
 
-    // Create a list of all customer IDs (from 2 to NUM_OF_CUSTOMERS + 1)
-    // Use a std::vector to safely handle the customer list
-    std::vector<int> customers;
+    // Create a list of all customers to be visited
+    std::vector<int> customers_to_visit;
     for (int i = 0; i < NUM_OF_CUSTOMERS; i++) {
-        customers.push_back(i + 1); 
+        customers_to_visit.push_back(i + 2);
     }
 
-    // Shuffle the customer list
+    // Shuffle the customer list to randomize the order
     unsigned seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
     std::mt19937 g(seed);
-    std::shuffle(customers.begin(), customers.end(), g);
+    std::shuffle(customers_to_visit.begin(), customers_to_visit.end(), g);
 
-    // Append the shuffled customers to the tour
-    for (int customer_id : customers) {
-        best_sol->tour[best_sol->steps++] = customer_id;
+    // --- Start of New Logic ---
+
+    // To create 'VEHICLES' number of routes, we need to insert 'VEHICLES - 1' depots.
+    // This partitions the shuffled customer list into separate routes.
+    for (int i = 0; i < MIN_VEHICLES - 1; i++) {
+        // Insert a depot at a random position within the customer list
+        // We avoid position 0 to prevent empty routes like 1-1.
+        int pos = 1 + rand() % customers_to_visit.size();
+        customers_to_visit.insert(customers_to_visit.begin() + pos, DEPOT);
+    }
+
+    // --- End of New Logic ---
+
+    // Append the now-partitioned list of customers and depots to the tour
+    for (int node_id : customers_to_visit) {
+        best_sol->tour[best_sol->steps++] = node_id;
     }
     
-    // End the tour at the depot
+    // End the entire tour at the depot
     best_sol->tour[best_sol->steps++] = DEPOT;
     
-    // Evaluate the complete tour's fitness
+    // Evaluate the complete multi-vehicle tour
     best_sol->tour_length = fitness_evaluation(best_sol->tour, best_sol->steps);
 
-    // This check is a safeguard for problem instances with very tight constraints
     if (best_sol->tour_length >= DBL_MAX) {
-        cout << "CRITICAL WARNING: A full random tour is infeasible. Problem constraints may be too tight." << endl;
+        cout << "CRITICAL WARNING: The initial multi-vehicle solution is infeasible." << endl;
     }
 }
-
 // --- Main Heuristic Functions ---
 
 void initialize_heuristic() {
     // This check ensures memory is allocated only ONCE for the entire program execution.
     if (best_sol == nullptr) {
-        printf("[DEBUG] HEURISTIC: First run, allocating memory...\n");
         best_sol = new solution;
         best_sol->tour = new int[ACTUAL_PROBLEM_SIZE * 2];
         current_tour = new int[ACTUAL_PROBLEM_SIZE * 2];
     }
 
     // This part will now run at the beginning of every trial, resetting the state.
-    printf("[DEBUG] HEURISTIC: Initializing for new run...\n");
 
     create_initial_solution();
     
@@ -83,7 +91,6 @@ void initialize_heuristic() {
     // Reset temperature for the start of a new run
     T = 1000.0;
     
-    printf("[DEBUG] HEURISTIC: Initialization complete. Tour size: %d, Energy: %.2f\n", current_tour_size, current_energy);
 }
 // This new function attempts to repair an infeasible tour by inserting a charging station.
 // It returns 'true' if the repair was successful, and 'false' otherwise.
@@ -97,13 +104,12 @@ static bool repair_tour(int* tour, int& size) {
 
         // Check if the move to the next node is feasible
         if (current_energy + get_energy_consumption(from, to) > BATTERY_CAPACITY) {
-            printf("[DEBUG] REPAIR: Infeasibility found at index %d. From %d to %d.\n", i, from, to); // <-- ADD
             // Infeasibility detected! We need to insert a charging station before node 'to'.
             int best_cs = -1;
             double min_detour = DBL_MAX;
 
             // Find the best charging station to insert.
-            for (int cs_id = NUM_OF_CUSTOMERS + 2; cs_id <= ACTUAL_PROBLEM_SIZE; cs_id++) {
+            for (int cs_id = NUM_OF_CUSTOMERS + 2; cs_id < ACTUAL_PROBLEM_SIZE; cs_id++) {
                 if (get_energy_consumption(from, cs_id) <= current_energy) { // Can we reach the station?
                     double detour_dist = get_distance(from, cs_id) + get_distance(cs_id, to) - get_distance(from, to);
                     if (detour_dist < min_detour) {
@@ -190,7 +196,7 @@ void run_heuristic() {
 
         // Ensure idx1 is smaller than idx2
         if (idx1 > idx2) std::swap(idx1, idx2);
-        printf("[DEBUG] RUN: Iteration %d, T=%.2f. Swapping %d and %d in tour of size %d.\n", i, T, idx1, idx2); // <-- ADD
+        
 
         two_opt_swap(neighbor_tour, current_tour_size, idx1, idx2);
 
@@ -232,4 +238,7 @@ void free_heuristic() {
     delete best_sol;
     delete[] current_tour; // Free the memory for the current tour state
     current_tour = nullptr;
+}
+int get_current_tour_size_debug() {
+    return current_tour_size;
 }

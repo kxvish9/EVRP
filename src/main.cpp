@@ -19,7 +19,6 @@ void start_run(int r){
 
 /*gets an observation of the run for your heuristic*/
 void end_run(int r){
-  printf("[DEBUG] MAIN: end_run called for run %d.\n", r); // <-- ADD THIS LINE
   get_mean(r-1,get_current_best()); //from stats.h
   cout << "End of run " << r << " with best solution quality " << get_current_best() << " total evaluations: " << get_evals()  << endl;
   cout << " " << endl;
@@ -51,24 +50,23 @@ int main(int argc, char *argv[]) {
     /*Step 2*/
     open_stats(); //open text files to store the best values from the 20 runs stats.h
     init_evals(); // Initialize the counter once before all runs
-    printf("[DEBUG] Starting main loop for %d trials...\n", MAX_TRIALS);
     for(run = 1; run <= MAX_TRIALS; run++){
-      printf("\n[DEBUG] MAIN: Starting Run %d\n", run);
-        /*Step 3*/   
-        start_run(run);
-        //Initialize your heuristic here
-        initialize_heuristic(); //heuristic.h 
+    /*Step 3*/
+    start_run(run);
 
-        /*Step 4*/
-        while(!termination_condition()){
-            //Execute your heuristic
-            run_heuristic();  //heuristic.h
-        }
-        
-        /*Step 5*/
-        end_run(run);  //store the best solution quality for each run
-        // The close_stats(run) call has been removed from inside the loop
-    }
+    //Initialize your heuristic here
+    initialize_heuristic(); //heuristic.h
+
+    /*Step 4*/
+    // We will use our own simple termination condition.
+// This runs the heuristic 25000 times, which is a reasonable number of evaluations.
+for (int i = 0; i < 25000; i++) {
+    run_heuristic();
+}
+
+    /*Step 5*/
+    end_run(run);  //store the best solution quality for each run
+}
     
     /*Step 6*/
     // This is now the single, correct call to close_stats.
