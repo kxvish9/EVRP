@@ -37,9 +37,6 @@ static void create_initial_solution() {
     for (int i = 0; i < NUM_OF_CUSTOMERS; i++) {
         customers.push_back(i + 1); 
     }
-    for (size_t i = 0; i < customers.size(); ++i) {
-        customers[i] = i + 2;
-    }
 
     // Shuffle the customer list
     unsigned seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
