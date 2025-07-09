@@ -147,31 +147,28 @@ void save_tour(solution* sol, const char* filename_prefix, int run_number) {
 }
 
 
-void close_stats(int run){
-    int i,j;
-    double perf_mean_value, perf_stdev_value;
+void close_stats(int run) {
+    double perf_mean_value = mean(perf_of_trials, MAX_TRIALS);
+    double perf_stdev_value = stdev(perf_of_trials, MAX_TRIALS, perf_mean_value);
 
-    //For statistics
-    for(i = 0; i < MAX_TRIALS; i++){
-        fprintf(log_performance, "%.2f", perf_of_trials[i]);
-        fprintf(log_performance,"\n");
+    // Open the file one last time to write summary stats
+    if ((log_performance = fopen(perf_filename, "w")) != NULL) {
+        fprintf(log_performance, "Mean %f\n", perf_mean_value);
+        fprintf(log_performance, "StDev %f\n", perf_stdev_value);
+        fprintf(log_performance, "Min %f\n", best_of_vector(perf_of_trials, MAX_TRIALS));
+        fprintf(log_performance, "Max %f\n", worst_of_vector(perf_of_trials, MAX_TRIALS));
+        fprintf(log_performance, "\n--- Raw Run Data ---\n");
+        for (int i = 0; i < MAX_TRIALS; i++) {
+            fprintf(log_performance, "Run %d: %.2f\n", i + 1, perf_of_trials[i]);
+        }
+        fclose(log_performance);
+    } else {
+        printf("ERROR: Could not open stats file for final write.\n");
     }
 
-    perf_mean_value = mean(perf_of_trials,MAX_TRIALS);
-    perf_stdev_value = stdev(perf_of_trials,MAX_TRIALS,perf_mean_value);
-    fprintf(log_performance,"Mean %f\t ",perf_mean_value);
-    fprintf(log_performance,"\tStd Dev %f\t ",perf_stdev_value);
-    fprintf(log_performance,"\n");
-    fprintf(log_performance, "Min: %f\t ", best_of_vector(perf_of_trials,MAX_TRIALS));
-    fprintf(log_performance,"\n");
-    fprintf(log_performance, "Max: %f\t ", worst_of_vector(perf_of_trials,MAX_TRIALS));
-    fprintf(log_performance,"\n");
-
-    // This is the updated call to save_tour
+    // Save the final tour from the last run for visualization
     const char* base_name = get_base_filename(problem_instance);
     save_tour(best_sol, base_name, run);
-
-    fclose(log_performance);
 }
 
 
