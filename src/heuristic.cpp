@@ -98,7 +98,7 @@ static bool repair_tour(int* tour, int& size) {
     double current_demand = 0.0;
     double current_energy = 0.0;
 
-    for (int i = 0; i < size - 1; i++) {
+    for (int i = 0; i < size - 2; i++) {
         int from = tour[i];
         int to = tour[i + 1];
 
@@ -122,9 +122,8 @@ static bool repair_tour(int* tour, int& size) {
             if (best_cs != -1) {
                 // We found a charging station to insert.
                 // Make space for the new node in the tour array.
-                for (int j = size - 1; j > i; j--) {
-                    tour[j + 1] = tour[j];
-                }
+                // Use memmove to safely shift the block of memory one position to the right
+                memmove(&tour[i + 2], &tour[i + 1], (size - (i + 1)) * sizeof(int));
                 // Insert the station and update the tour size.
                 tour[i + 1] = best_cs;
                 size++;
