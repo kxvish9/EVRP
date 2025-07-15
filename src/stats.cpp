@@ -34,7 +34,6 @@ const char* get_base_filename(const char* path) {
 }
 void open_stats(void) {
     // Debug message to confirm the function is called
-    printf("DEBUG: open_stats() function called.\n");
 
     // Initialize performance tracker
     perf_of_trials = new double[MAX_TRIALS];
@@ -56,8 +55,6 @@ void open_stats(void) {
     if ((log_performance = fopen(perf_filename, "w")) == NULL) {
         printf("DEBUG: ERROR - Could not open %s\n", perf_filename);
         exit(2);
-    } else {
-        printf("DEBUG: %s opened successfully.\n", perf_filename);
     }
 }
 
