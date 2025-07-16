@@ -36,7 +36,6 @@ int main(int argc, char *argv[])
   {
     start_run(run);
     initialize_heuristic();
-
     // This fixed loop executes the heuristic for a set number of iterations
     for (int i = 0; i < 25000; i++)
     {
