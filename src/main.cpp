@@ -1,82 +1,77 @@
-#include<iostream>
-#include<stdlib.h>
-#include<limits.h>
-
+#include <iostream>
+#include <cstdlib>
+#include <ctime> // Required for time()
+#include <limits.h>
+#include <cfloat>
 #include "EVRP.hpp"
 #include "heuristic.hpp"
 #include "stats.hpp"
 
 using namespace std;
 
+int main(int argc, char *argv[])
+{
+  // Safety check for command-line arguments
+  if (argc != 2)
+  {
+    cout << "Usage: ./main <problem_instance>" << endl;
+    return 1;
+  }
+  // Variables to track the best solution found across all runs
+  int best_run = -1;
+  double best_run_fitness = DBL_MAX;
+  char best_tour_filename[CHAR_LEN];
+  int run;
+  srand(time(NULL)); // Seed the C-style random generator once
 
-/*initialiazes a run for your heuristic*/
-void start_run(int r){
+  // Step 1: Read the problem instance from file
+  problem_instance = argv[1];
+  read_problem(problem_instance);
 
-  srand(r); //random seed
-  init_current_best();
-  cout << "Run: " << r << " with random seed " << r << endl;
-}
+  // Step 2: Prepare for statistics collection
+  open_stats();
 
-/*gets an observation of the run for your heuristic*/
-void end_run(int r){
-  get_mean(r-1,get_current_best()); //from stats.h
-  cout << "End of run " << r << " with best solution quality " << get_current_best() << " total evaluations: " << get_evals()  << endl;
-  cout << " " << endl;
-}
-
-/*sets the termination conidition for your heuristic*/
-bool termination_condition(void) {
- 
-  bool flag; 
-  if(get_evals() >= TERMINATION) 
-    flag = true;
-  else
-    flag = false;
-
-  return flag;
-}
-
-
-/****************************************************************/
-/*                Main Function                                 */
-/****************************************************************/
-int main(int argc, char *argv[]) {
-
-    int run;
-    /*Step 1*/
-    problem_instance = argv[1];      //pass the .evrp filename as an argument
-    read_problem(problem_instance);  //Read EVRP from file from EVRP.h
-
-    /*Step 2*/
-    open_stats(); //open text files to store the best values from the 20 runs stats.h
-    init_evals(); // Initialize the counter once before all runs
-    for(run = 1; run <= MAX_TRIALS; run++){
-    /*Step 3*/
+  // Step 3: Perform all trial runs
+  for (run = 1; run <= MAX_TRIALS; run++)
+  {
     start_run(run);
+    initialize_heuristic();
 
-    //Initialize your heuristic here
-    initialize_heuristic(); //heuristic.h
+    // This fixed loop executes the heuristic for a set number of iterations
+    for (int i = 0; i < 25000; i++)
+    {
+      run_heuristic();
+    }
 
-    /*Step 4*/
-    // We will use our own simple termination condition.
-// This runs the heuristic 25000 times, which is a reasonable number of evaluations.
-for (int i = 0; i < 25000; i++) {
-    run_heuristic();
-}
+    end_run(run);
+    // Check if the current run is the best one so far
+    if (best_sol->tour_length < best_run_fitness)
+    {
+      best_run_fitness = best_sol->tour_length;
+      best_run = run;
+    }
+  }
 
-    /*Step 5*/
-    end_run(run);  //store the best solution quality for each run
-}
-    
-    /*Step 6*/
-    // This is now the single, correct call to close_stats.
-    // We pass MAX_TRIALS to ensure it has a valid run number for saving the final tour.
-    close_stats(MAX_TRIALS); 
+  // Step 4: Finalize stats and save the last tour
+  close_stats();
+  // --- Call Python script to plot the best tour ---
+  printf("\nPlotting best tour from Run %d...\n", best_run);
 
-    //free memory
-    free_stats();
-    free_heuristic();
-    free_EVRP();
+  // Construct the path to the tour file of the best run
+  const char *base_name = get_base_filename(problem_instance);
+  sprintf(best_tour_filename, "tours/%s/run-%d.tour", base_name, best_run);
 
-    return 0;
+  // Construct the full python command
+  char command[CHAR_LEN * 3];
+  sprintf(command, "python ../plot_route.py %s %s", problem_instance, best_tour_filename);
+
+  // Execute the command
+  system(command);
+
+  // Step 5: Free all allocated memory
+  free_stats();
+  free_heuristic();
+  free_EVRP();
+
+  return 0;
 }

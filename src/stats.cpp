@@ -1,15 +1,8 @@
-#include<cmath>
-#include<iostream>
-#include<stdio.h>
-#include<stdlib.h>
-#include<string>
-#include<cstring>
-#include<math.h>
-#include<fstream>
-#include<time.h>
-#include<limits.h>
+#include <iostream>
+#include <stdio.h>
+#include <string.h>
+#include <cmath>
 #include <direct.h> // For _mkdir on Windows
-#include <filesystem>
 #include "EVRP.hpp"
 #include "stats.hpp"
 #include "heuristic.hpp"
@@ -22,49 +15,64 @@ FILE *log_performance;
 char *perf_filename;
 
 double* perf_of_trials;
-const char* get_base_filename(const char* path) {
-    const char* slash = strrchr(path, '/');
-    const char* backslash = strrchr(path, '\\');
-    if (slash && backslash) {
-        return (slash > backslash) ? slash + 1 : backslash + 1;
+// Helper to create a directory for a given filepath
+void create_directory_for_file(const char* filepath) {
+    char* path_copy = new char[strlen(filepath) + 1];
+    strcpy(path_copy, filepath);
+    // In C++, std::filesystem::path(path_copy).parent_path() is safer
+    // but for C-style strings, we find the last slash.
+    char* last_slash = strrchr(path_copy, '/');
+    if (last_slash != NULL) {
+        *last_slash = '\0'; // Cut the string at the last slash
+        _mkdir(path_copy);  // Create the directory
     }
-    if (slash) return slash + 1;
-    if (backslash) return backslash + 1;
-    return path;
+    delete[] path_copy;
+}
+/*
+ * Sets up the initial state for a single trial run.
+ */
+void start_run(int r)
+{
+  init_current_best();
+  cout << "Run: " << r << " with random seed " << r << endl;
+}
+
+/*
+ * Gathers and prints results from a single trial run.
+ */
+void end_run(int r){
+    // First, record the performance value for the run
+    record_run_performance(r - 1, get_current_best());
+    // Second, save the best tour found in that run
+    save_tour(best_sol, r);
+
+    cout << "End of run " << r << " with best solution quality " << get_current_best() << endl;
+    cout << " " << endl;
 }
 void open_stats(void) {
-    // Debug message to confirm the function is called
-
     // Initialize performance tracker
     perf_of_trials = new double[MAX_TRIALS];
     for (int i = 0; i < MAX_TRIALS; i++) {
         perf_of_trials[i] = 0.0;
     }
 
-    // Create the 'stats' directory if it doesn't exist
+    // Prepare the full path for the results file
     const char* base_name = get_base_filename(problem_instance);
-    char stats_dir[CHAR_LEN];
-    sprintf(stats_dir, "stats/%s", base_name);
-    _mkdir("stats");
-    _mkdir(stats_dir); // Create the problem-specific subdirectory
-
     perf_filename = new char[CHAR_LEN];
-    sprintf(perf_filename, "%s/results.txt", stats_dir);
+    sprintf(perf_filename, "stats/%s/results.txt", base_name);
 
-    // Open the file in "write" mode ("w") to overwrite it each time
+    // Use the helper to create the necessary directories
+    create_directory_for_file(perf_filename);
+
+    // Open the file in "write" mode, which overwrites previous results
     if ((log_performance = fopen(perf_filename, "w")) == NULL) {
-        printf("DEBUG: ERROR - Could not open %s\n", perf_filename);
         exit(2);
     }
 }
 
 
-void get_mean(int r, double value) {
-
-  perf_of_trials[r] = value;
-  // Save the tour at the end of each run
-    const char* base_name = get_base_filename(problem_instance);
-    save_tour(best_sol, base_name, r + 1); // r is 0-indexed, so we add 1 for file naming
+void record_run_performance(int r, double value) {
+    perf_of_trials[r] = value;
 }
 
 
@@ -116,37 +124,25 @@ double worst_of_vector(double *values, int l ) {
   }
   return max;
 }
-void save_tour(solution* sol, const char* filename_prefix, int run_number) {
-    // Create a directory for the tour files if it doesn't exist
-    _mkdir("tours");
-
-    // Create the problem-specific subdirectory
-    char tour_dir[CHAR_LEN];
-    sprintf(tour_dir, "tours/%s", filename_prefix);
-    _mkdir(tour_dir);
-
-    // Create the full filename
+void save_tour(solution* sol, int run_number) {
+    const char* base_name = get_base_filename(problem_instance);
     char tour_filename[CHAR_LEN];
-    sprintf(tour_filename, "%s/run-%d.tour", tour_dir, run_number);
+    sprintf(tour_filename, "tours/%s/run-%d.tour", base_name, run_number);
 
+    create_directory_for_file(tour_filename);
     FILE* tour_file = fopen(tour_filename, "w");
     if (tour_file == NULL) {
-        printf("ERROR: Could not open tour file %s\n", tour_filename);
-        return;
+        return; // Silently fail if file can't be opened
     }
 
-    // Write the tour to the file
     for (int i = 0; i < sol->steps; i++) {
         fprintf(tour_file, "%d ", sol->tour[i]);
     }
-
     fclose(tour_file);
-    // This line is optional, you can remove it if you don't want the console message
-    // printf("Tour for run %d saved to %s\n", run_number, tour_filename); 
 }
 
 
-void close_stats(int run) {
+void close_stats(void) {
     double perf_mean_value = mean(perf_of_trials, MAX_TRIALS);
     double perf_stdev_value = stdev(perf_of_trials, MAX_TRIALS, perf_mean_value);
 

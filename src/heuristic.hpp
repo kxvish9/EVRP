@@ -13,5 +13,5 @@ extern solution *best_sol;
 void initialize_heuristic();
 void run_heuristic();
 void free_heuristic();
-int get_current_tour_size_debug();
+const char* get_base_filename(const char* path);
 #endif // HEURISTIC_HPP
