@@ -123,6 +123,7 @@ static bool repair_tour(int* tour, int& size) {
                 // We found a charging station to insert.
                 // Make space for the new node in the tour array.
                 // Use memmove to safely shift the block of memory one position to the right
+                if (size >= (ACTUAL_PROBLEM_SIZE * 2) - 1) return false;
                 memmove(&tour[i + 2], &tour[i + 1], (size - (i + 1)) * sizeof(int));
                 // Insert the station and update the tour size.
                 tour[i + 1] = best_cs;
