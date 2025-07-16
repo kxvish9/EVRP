@@ -224,20 +224,65 @@ static int* create_neighbor_solution(const int* tour, int tour_size) {
 
     return neighbor_tour;
 }
+// Attempts to merge two adjacent routes in the tour.
+// Returns a new tour array if successful, otherwise returns nullptr.
+static int* attempt_route_merge(const int* tour, int tour_size, int& new_size) {
+    std::vector<int> depot_indices;
+    for (int i = 0; i < tour_size; ++i) {
+        if (tour[i] == DEPOT) {
+            depot_indices.push_back(i);
+        }
+    }
+
+    // Cannot merge if there's only one route (or less)
+    if (depot_indices.size() <= 2) {
+        return nullptr;
+    }
+
+    // Pick a random depot to remove (but not the first or last one)
+    int depot_to_remove_idx_in_vector = 1 + rand() % (depot_indices.size() - 2);
+    int depot_to_remove_pos = depot_indices[depot_to_remove_idx_in_vector];
+
+    // Create the new tour with one less node
+    new_size = tour_size - 1;
+    int* new_tour = new int[ACTUAL_PROBLEM_SIZE * 2];
+    int new_tour_idx = 0;
+    for (int i = 0; i < tour_size; ++i) {
+        if (i == depot_to_remove_pos) {
+            continue; // Skip the depot to merge the routes
+        }
+        new_tour[new_tour_idx++] = tour[i];
+    }
+    
+    // Check if the new, merged route is valid
+    if (get_solution_cost(new_tour, new_size) < DBL_MAX) {
+        return new_tour; // The merged route is valid
+    } else {
+        delete[] new_tour; // The merged route is invalid, so discard it
+        return nullptr;
+    }
+}
 void run_heuristic() {
     for (int i = 0; i < ITERATIONS_PER_CALL; ++i) {
         
-        // 1. Create a new neighbor solution
+        int* neighbor_tour = nullptr;
         int neighbor_tour_size = current_tour_size;
-        int* neighbor_tour = create_neighbor_solution(current_tour, neighbor_tour_size);
-        if (neighbor_tour == nullptr) {
-            continue; // Skip if tour is too small to modify
+
+        // Randomly choose between a 2-Opt swap (more frequent) and a route merge
+        if ((rand() % 10) < 8) { // 80% chance for a 2-Opt swap
+            neighbor_tour = create_neighbor_solution(current_tour, neighbor_tour_size);
+        } else { // 20% chance for a route merge
+            neighbor_tour = attempt_route_merge(current_tour, neighbor_tour_size, neighbor_tour_size);
         }
 
-        // 2. Get the cost of the new solution (which includes repairing it if necessary)
+        if (neighbor_tour == nullptr) {
+            continue; // Skip if the move was not possible or created an invalid merge
+        }
+
+        // Get the cost of the new solution (which includes repairing it if necessary)
         double neighbor_energy = get_solution_cost(neighbor_tour, neighbor_tour_size);
 
-        // 3. Decide whether to accept the new solution
+        // Decide whether to accept the new solution
         if (neighbor_energy < DBL_MAX) {
             if (neighbor_energy < current_energy) {
                 // Always accept better solutions
@@ -255,10 +300,9 @@ void run_heuristic() {
             }
         }
         
-        // 4. Clean up memory for the neighbor
         delete[] neighbor_tour;
 
-        // 5. Update the overall best solution if the current one is better
+        // Update the overall best solution if the current one is better
         if (current_energy < best_sol->tour_length) {
             best_sol->tour_length = current_energy;
             std::copy(current_tour, current_tour + current_tour_size, best_sol->tour);
