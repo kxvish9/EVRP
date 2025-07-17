@@ -36,30 +36,42 @@ def parse_evrp_file(filepath):
             
     return nodes
 
-def parse_tour_file(filepath):
-    """Parses the .tour file, handles depot ID, and splits into sub-routes."""
+def parse_tour_file(filepath, num_vehicles):
+    """
+    Parses the .tour file and splits it into sub-routes for a specific number of vehicles.
+    """
     with open(filepath, 'r') as f:
-        tour_str = f.read().strip().split()
+        tour_str_list = f.read().strip().split()
+
+    # This single line robustly converts all occurrences of '0' to 1
+    # before converting the rest of the nodes to integers. This prevents any '0'
+    # from ever entering the tour list.
+    full_tour = [1 if node == '0' else int(node) for node in tour_str_list]
     
-    # Replace 0 with 1 for the depot and convert to integers
-    full_tour = [1 if node == '0' else int(node) for node in tour_str]
-    
-    # Split the full tour into sub-routes based on the depot ID (1)
     sub_routes = []
-    current_route = [1] # Start the first route at the depot
-    for node_id in full_tour[1:]: # Start from the second element
-        current_route.append(node_id)
-        if node_id == 1:
-            if len(current_route) > 2: # Ensure it's a valid route
-                sub_routes.append(current_route)
-            current_route = [1] # Start the next route
+    start_idx = 0
+
+    # The first (k-1) vehicles get one trip each, ending at the first depot they encounter.
+    for i in range(num_vehicles - 1):
+        try:
+            # Find the next depot occurrence to define the end of the current route
+            end_idx = full_tour.index(1, start_idx + 1)
+            sub_routes.append(full_tour[start_idx : end_idx + 1])
+            start_idx = end_idx
+        except ValueError:
+            # This case handles if the tour file implies fewer vehicles than specified.
+            print(f"Warning: Not enough depot visits in tour to support {num_vehicles} vehicles. Assigning remaining tour to last vehicle.")
+            break
+            
+    # The last vehicle takes all the remaining parts of the tour.
+    sub_routes.append(full_tour[start_idx:])
             
     return sub_routes
 
-def plot_evrp_route(problem_file, tour_file):
-    """Plots the EVRP solution with multiple routes."""
+def plot_evrp_route(problem_file, tour_file, num_vehicles):
+    """Plots the EVRP solution with a specified number of routes."""
     nodes = parse_evrp_file(problem_file)
-    sub_routes = parse_tour_file(tour_file)
+    sub_routes = parse_tour_file(tour_file, num_vehicles)
 
     plt.figure(figsize=(14, 10))
 
@@ -80,7 +92,7 @@ def plot_evrp_route(problem_file, tour_file):
         color = plt.cm.viridis(i / max(1, len(sub_routes))) # Use a colormap for distinct colors
         plt.plot(route_x, route_y, color=color, linestyle='-', marker='o', markersize=4, label=f'Route {i+1}')
 
-    plt.title(f'EVRP Solution for {os.path.basename(problem_file)}')
+    plt.title(f'EVRP Solution for {os.path.basename(problem_file)} ({num_vehicles} Vehicles)')
     plt.xlabel('X Coordinate')
     plt.ylabel('Y Coordinate')
     plt.grid(True)
@@ -96,12 +108,19 @@ def plot_evrp_route(problem_file, tour_file):
     print(f"Plot saved to {save_path}")
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: python plot_route.py <path_to_problem_file> <path_to_tour_file>")
+    if len(sys.argv) != 4:
+        print("Usage: python plot_route.py <path_to_problem_file> <path_to_tour_file> <num_vehicles>")
         sys.exit(1)
         
     problem_file = sys.argv[1]
     tour_file = sys.argv[2]
+    try:
+        num_vehicles = int(sys.argv[3])
+        if num_vehicles < 1:
+            raise ValueError
+    except ValueError:
+        print("Error: <num_vehicles> must be a positive integer.")
+        sys.exit(1)
     
     if not os.path.exists(problem_file):
         print(f"Error: Problem file not found at {problem_file}")
@@ -111,4 +130,4 @@ if __name__ == "__main__":
         print(f"Error: Tour file not found at {tour_file}")
         sys.exit(1)
 
-    plot_evrp_route(problem_file, tour_file)
+    plot_evrp_route(problem_file, tour_file, num_vehicles)

@@ -8,7 +8,15 @@
 #include "stats.hpp"
 
 using namespace std;
-
+/*sets the termination conidition for your heuristic*/
+bool termination_condition(void) {
+  bool flag;  
+  if(get_evals() >= TERMINATION)  
+    flag = true;
+  else
+    flag = false;
+  return flag;
+}
 int main(int argc, char *argv[])
 {
   // Safety check for command-line arguments
@@ -37,7 +45,7 @@ int main(int argc, char *argv[])
     start_run(run);
     initialize_heuristic();
     // This fixed loop executes the heuristic for a set number of iterations
-    for (int i = 0; i < 25000; i++)
+    while(!termination_condition())
     {
       run_heuristic();
     }
@@ -62,7 +70,7 @@ int main(int argc, char *argv[])
 
   // Construct the full python command
   char command[CHAR_LEN * 3];
-  sprintf(command, "python ../plot_route.py %s %s", problem_instance, best_tour_filename);
+  sprintf(command, "python ../plot_route.py %s %s %d", problem_instance, best_tour_filename, MIN_VEHICLES);
 
   // Execute the command
   system(command);

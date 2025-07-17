@@ -39,7 +39,7 @@ static std::vector<int> partition_customers(const std::vector<int> &customers, s
     }
     return partitioned_tour;
 }
-// This function checks validity, tries to repair if needed, and returns the final cost.
+
 const char *get_base_filename(const char *path)
 {
     const char *slash = strrchr(path, '/');
@@ -57,26 +57,30 @@ const char *get_base_filename(const char *path)
 // Creates a valid, feasible initial tour to start the search
 static void create_initial_solution()
 {
-    best_sol->tour[0] = DEPOT;
-    best_sol->steps = 1;
-    std::vector<int> customers_to_visit;
-    for (int i = 0; i < NUM_OF_CUSTOMERS; i++)
+    while (true)
     {
-        customers_to_visit.push_back(i + 2);
-    }
-    std::shuffle(customers_to_visit.begin(), customers_to_visit.end(), g); // Use the global generator
+        best_sol->tour[0] = DEPOT;
+        best_sol->steps = 1;
+        std::vector<int> customers_to_visit;
+        for (int i = 0; i < NUM_OF_CUSTOMERS; i++)
+        {
+            customers_to_visit.push_back(i + 2);
+        }
+        std::shuffle(customers_to_visit.begin(), customers_to_visit.end(), g); // Use the global generator
 
-    std::vector<int> full_tour_path = partition_customers(customers_to_visit, g); // Pass the generator
+        std::vector<int> full_tour_path = partition_customers(customers_to_visit, g); // Pass the generator
+        std::copy(full_tour_path.begin(), full_tour_path.end(), &best_sol->tour[best_sol->steps]);
+        best_sol->steps += full_tour_path.size();
+        best_sol->tour[best_sol->steps++] = DEPOT;
 
-    best_sol->steps = 1;
-    std::copy(full_tour_path.begin(), full_tour_path.end(), &best_sol->tour[best_sol->steps]);
-    best_sol->steps += full_tour_path.size();
-    best_sol->tour[best_sol->steps++] = DEPOT;
+        best_sol->tour_length = get_solution_cost(best_sol->tour, best_sol->steps);
 
-    best_sol->tour_length = fitness_evaluation(best_sol->tour, best_sol->steps);
-    if (best_sol->tour_length >= DBL_MAX)
-    {
-        cout << "CRITICAL WARNING: The initial multi-vehicle solution is infeasible." << endl;
+        // If the returned cost is less than DBL_MAX, the solution is valid.
+        if (best_sol->tour_length < DBL_MAX)
+        {
+            // A feasible solution has been found, so we can exit the loop.
+            break;
+        }
     }
 }
 // --- Main Heuristic Functions ---
@@ -115,7 +119,7 @@ static int find_best_charging_station(int from_node, int to_node, double energy_
     for (int cs_id = NUM_OF_CUSTOMERS + 2; cs_id < ACTUAL_PROBLEM_SIZE; cs_id++)
     {
         // Check if we can reach the station from our current location
-        if (get_energy_consumption(from_node, cs_id) <= energy_at_from)
+        if (get_energy_consumption(from_node, cs_id) <= (BATTERY_CAPACITY - energy_at_from))
         {
             // Check if we can reach the final destination AFTER charging at the station
             if (BATTERY_CAPACITY >= get_energy_consumption(cs_id, to_node))
@@ -140,6 +144,27 @@ static bool repair_tour(int *tour, int &size)
     {
         int from = tour[i];
         int to = tour[i + 1];
+        // --- NEW: Proactive Capacity Check ---
+        // Check if serving the NEXT node ('to') would violate capacity. This excludes depot and charging stations.
+        if (to > 1 && to <= NUM_OF_CUSTOMERS) // to is a customer
+        {
+            if (current_demand + get_customer_demand(to) > MAX_CAPACITY)
+            {
+                // CAPACITY VIOLATION: We must insert a depot trip BEFORE visiting this customer.
+                
+                // Safety check: ensure there's space in the array to add a node.
+                if (size >= (ACTUAL_PROBLEM_SIZE * 2) - 1)
+                    return false; 
+
+                // Shift the tour array to make space for the new depot visit at position i + 1.
+                memmove(&tour[i + 2], &tour[i + 1], (size - (i + 1)) * sizeof(int));
+                tour[i + 1] = DEPOT;
+                size++;
+
+                // The destination for this leg of the journey is now the depot.
+                to = DEPOT; 
+            }
+        }
 
         // Check if the move to the next node is feasible
         if (current_energy + get_energy_consumption(from, to) > BATTERY_CAPACITY)
@@ -215,16 +240,21 @@ static double get_solution_cost(int *tour, int &size)
 // Creates a new neighbor solution by performing a 2-Opt swap on the current tour.
 // Note: This function allocates new memory that must be deleted by the caller.
 // Creates a new neighbor solution by performing a 2-Opt swap on the current tour.
-static int *create_neighbor_solution(const int *tour, int tour_size, std::mt19937 &generator)
+// Creates a new, VALID neighbor solution by performing a 2-Opt swap.
+static int *create_neighbor_solution(const int *tour, int tour_size, int &new_size, std::mt19937 &generator)
 {
     if (tour_size <= 3)
     {
         return nullptr;
     }
+
+    // Create a temporary neighbor to modify
     int *neighbor_tour = new int[ACTUAL_PROBLEM_SIZE * 2];
     std::copy(tour, tour + tour_size, neighbor_tour);
+    new_size = tour_size;
 
-    std::uniform_int_distribution<int> distribution(1, tour_size - 2);
+    // Generate indices and perform the swap
+    std::uniform_int_distribution<int> distribution(1, new_size - 2);
     int idx1 = distribution(generator);
     int idx2 = distribution(generator);
     while (idx1 == idx2)
@@ -233,8 +263,18 @@ static int *create_neighbor_solution(const int *tour, int tour_size, std::mt1993
     }
     if (idx1 > idx2)
         std::swap(idx1, idx2);
-    two_opt_swap(neighbor_tour, tour_size, idx1, idx2);
-    return neighbor_tour;
+    two_opt_swap(neighbor_tour, new_size, idx1, idx2);
+
+    // After swapping, immediately check if the new tour is valid.
+    if (get_solution_cost(neighbor_tour, new_size) < DBL_MAX)
+    {
+        return neighbor_tour; // The swap resulted in a valid tour
+    }
+    else
+    {
+        delete[] neighbor_tour; // The swap resulted in an invalid tour, discard it
+        return nullptr;
+    }
 }
 // Attempts to merge two adjacent routes in the tour.
 // Returns a new tour array if successful, otherwise returns nullptr.
@@ -289,12 +329,12 @@ void run_heuristic()
     {
 
         int neighbor_tour_size = current_tour_size;
-        int *neighbor_tour = create_neighbor_solution(current_tour, neighbor_tour_size, g); // Pass the generator
+        int *neighbor_tour = nullptr; // null pointer
 
         // Randomly choose between a 2-Opt swap (more frequent) and a route merge
         if ((rand() % 10) < 8)
         { // 80% chance for a 2-Opt swap
-            neighbor_tour = create_neighbor_solution(current_tour, neighbor_tour_size, g);
+            neighbor_tour = create_neighbor_solution(current_tour, current_tour_size, neighbor_tour_size, g);
         }
         else
         { // 20% chance for a route merge

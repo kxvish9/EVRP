@@ -33,6 +33,7 @@ void create_directory_for_file(const char* filepath) {
  */
 void start_run(int r)
 {
+  init_evals();
   init_current_best();
   cout << "Run: " << r << " with random seed " << r << endl;
 }
