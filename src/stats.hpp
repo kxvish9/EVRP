@@ -6,7 +6,7 @@
 void open_stats(void);					
 void close_stats(void);			
 // Records the performance of a single run
-void record_run_performance(int r, double value);
+void get_mean(int r, double value);
 // Saves the tour from a single run to a file
 void save_tour(solution* sol, int run_number);
 void free_stats();	

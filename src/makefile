@@ -1,19 +1,30 @@
-all: main
+# Compiler to use
+CXX = g++
 
-main: main.o heuristic.o EVRP.o stats.o
-	g++ -g main.o heuristic.o EVRP.o stats.o -o main
+# Compiler flags for a high-performance release build
+CXXFLAGS = -O3 -march=native
+
+# The name of your final program
+TARGET = main
+
+# --- Rules ---
+
+all: $(TARGET)
+
+$(TARGET): main.o heuristic.o EVRP.o stats.o
+	$(CXX) $^ -o $(TARGET)
 
 main.o: main.cpp
-	g++ -g -c main.cpp
+	$(CXX) $(CXXFLAGS) -c main.cpp
 
 heuristic.o: heuristic.cpp
-	g++ -g -c heuristic.cpp
+	$(CXX) $(CXXFLAGS) -c heuristic.cpp
 
 EVRP.o: EVRP.cpp
-	g++ -g -c EVRP.cpp
+	$(CXX) $(CXXFLAGS) -c EVRP.cpp
 
 stats.o: stats.cpp
-	g++ -g -c stats.cpp
+	$(CXX) $(CXXFLAGS) -c stats.cpp
 
 clean:
-	del *.o main.exe main
+	rm -f *.o $(TARGET)

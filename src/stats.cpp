@@ -43,7 +43,7 @@ void start_run(int r)
  */
 void end_run(int r){
     // First, record the performance value for the run
-    record_run_performance(r - 1, get_current_best());
+    get_mean(r - 1, get_current_best());
     // Second, save the best tour found in that run
     save_tour(best_sol, r);
 
@@ -72,7 +72,7 @@ void open_stats(void) {
 }
 
 
-void record_run_performance(int r, double value) {
+void get_mean(int r, double value) {
     perf_of_trials[r] = value;
 }
 
@@ -173,5 +173,3 @@ void free_stats(){
   delete[] perf_of_trials;
   delete[] perf_filename;
 }
-
-

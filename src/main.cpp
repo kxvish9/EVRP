@@ -49,7 +49,7 @@ int main(int argc, char *argv[])
     {
       run_heuristic();
     }
-
+    check_solution(best_sol->tour, best_sol->steps);
     end_run(run);
     // Check if the current run is the best one so far
     if (best_sol->tour_length < best_run_fitness)

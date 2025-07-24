@@ -14,6 +14,7 @@ void initialize_heuristic();
 void run_heuristic();
 void free_heuristic();
 const char* get_base_filename(const char* path);
-static int* create_neighbor_solution(const int* tour, int tour_size, int& new_size, std::mt19937& generator);
+static void create_neighbor_solution(int *neighbor_buffer, const int *tour, int tour_size, std::mt19937 &generator);
 static double get_solution_cost(int *tour, int &size);
+static int find_best_charging_station(int from_node, int to_node, double energy_at_from);
 #endif // HEURISTIC_HPP
