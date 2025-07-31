@@ -10,6 +10,9 @@ struct solution{
 
 extern solution *best_sol;
 
+void initialize_population();
+void run_ga_generation();
+static void swap_operator(int *neighbor_buffer, const int *tour, int tour_size, std::mt19937 &generator);
 void initialize_heuristic();
 void run_heuristic();
 void free_heuristic();

@@ -27,4 +27,4 @@ stats.o: stats.cpp
 	$(CXX) $(CXXFLAGS) -c stats.cpp
 
 clean:
-	rm -f *.o $(TARGET)
+	del /f /q *.o $(TARGET)

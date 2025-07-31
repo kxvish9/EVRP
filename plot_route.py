@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import sys
 import os
-
+import pandas as pd
 def parse_evrp_file(filepath):
     """Parses the .evrp file to get node coordinates and types."""
     nodes = {}
@@ -107,27 +107,78 @@ def plot_evrp_route(problem_file, tour_file, num_vehicles):
     plt.savefig(save_path)
     print(f"Plot saved to {save_path}")
 
-if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        print("Usage: python plot_route.py <path_to_problem_file> <path_to_tour_file> <num_vehicles>")
-        sys.exit(1)
-        
-    problem_file = sys.argv[1]
-    tour_file = sys.argv[2]
+def plot_fitness_curve(data_file):
+    """
+    Plots the fitness (tour length) over evaluations from a given data file.
+    """
+    if not os.path.exists(data_file):
+        print(f"Error: Fitness data file not found at {data_file}")
+        return
+
+    # Read the tab-separated data
     try:
-        num_vehicles = int(sys.argv[3])
-        if num_vehicles < 1:
-            raise ValueError
-    except ValueError:
-        print("Error: <num_vehicles> must be a positive integer.")
-        sys.exit(1)
+        data = pd.read_csv(data_file, sep='\t')
+        if data.empty:
+            print("Error: Fitness data file is empty.")
+            return
+    except Exception as e:
+        print(f"Error reading data file: {e}")
+        return
     
-    if not os.path.exists(problem_file):
-        print(f"Error: Problem file not found at {problem_file}")
-        sys.exit(1)
+    # --- Plotting ---
+    plt.figure(figsize=(12, 7))
+    plt.plot(data.iloc[:, 0], data.iloc[:, 1], linestyle='-', color='b', label='Best Fitness')
+    
+    problem_name = os.path.basename(os.path.dirname(os.path.dirname(data_file)))
+    run_name = os.path.splitext(os.path.basename(data_file))[0].replace('_', ' ').replace('-', ' ').title()
+    
+    plt.title(f'SA Fitness Convergence for {problem_name} ({run_name})')
+    plt.xlabel('Fitness Evaluations')
+    plt.ylabel('Best Tour Length (Fitness)')
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    
+    # --- Saving the Plot ---
+    output_dir = os.path.join('../plots', problem_name)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    plot_filename = f"fitness_plot_{os.path.splitext(os.path.basename(data_file))[0]}.png"
+    save_path = os.path.join(output_dir, plot_filename)
+    
+    plt.savefig(save_path)
+    print(f"Fitness plot saved to {save_path}")
+    plt.close()
 
-    if not os.path.exists(tour_file):
-        print(f"Error: Tour file not found at {tour_file}")
-        sys.exit(1)
+if __name__ == "__main__":
+    # Decide which function to run based on arguments
+    if len(sys.argv) > 1 and sys.argv[1] == 'plot_fitness':
+        if len(sys.argv) != 3:
+            print("Usage: python plot_route.py plot_fitness <path_to_fitness_data_file>")
+            sys.exit(1)
+        plot_fitness_curve(sys.argv[2])
+    
+    # --- Original route plotting logic ---
+    else:
+        if len(sys.argv) != 4:
+            print("Usage for route plotting: python plot_route.py <path_to_problem_file> <path_to_tour_file> <num_vehicles>")
+            sys.exit(1)
+        
+        problem_file, tour_file = sys.argv[1], sys.argv[2]
+        
+        try:
+            num_vehicles = int(sys.argv[3])
+            if num_vehicles < 1: raise ValueError
+        except ValueError:
+            print("Error: <num_vehicles> must be a positive integer.")
+            sys.exit(1)
+        
+        if not os.path.exists(problem_file):
+            print(f"Error: Problem file not found at {problem_file}")
+            sys.exit(1)
 
-    plot_evrp_route(problem_file, tour_file, num_vehicles)
+        if not os.path.exists(tour_file):
+            print(f"Error: Tour file not found at {tour_file}")
+            sys.exit(1)
+
+        plot_evrp_route(problem_file, tour_file, num_vehicles)

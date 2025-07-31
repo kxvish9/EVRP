@@ -6,12 +6,13 @@
 #include "EVRP.hpp"
 #include "heuristic.hpp"
 #include "stats.hpp"
-
+#define ALGORITHM_CHOICE 0 
 using namespace std;
 /*sets the termination conidition for your heuristic*/
-bool termination_condition(void) {
-  bool flag;  
-  if(get_evals() >= TERMINATION)  
+bool termination_condition(void)
+{
+  bool flag;
+  if (get_evals() >= TERMINATION)
     flag = true;
   else
     flag = false;
@@ -43,12 +44,25 @@ int main(int argc, char *argv[])
   for (run = 1; run <= MAX_TRIALS; run++)
   {
     start_run(run);
-    initialize_heuristic();
-    // This fixed loop executes the heuristic for a set number of iterations
-    while(!termination_condition())
-    {
-      run_heuristic();
-    }
+    #if ALGORITHM_CHOICE == 0 
+      initialize_heuristic();
+      // This fixed loop executes the heuristic for a set number of iterations
+      
+      while (!termination_condition())
+      {
+        run_heuristic();
+      }
+    #else // Run Genetic Algorithm
+      const int MAX_GENERATIONS = 500;
+      cout << "Running Genetic Algorithm..." << endl;
+      initialize_population();
+      for (int gen = 0; gen < MAX_GENERATIONS; gen++) {
+        run_ga_generation();
+        // Optional: print progress
+        // cout << "Generation: " << gen + 1 << " / " << MAX_GENERATIONS << " | Best: " << best_sol->tour_length << "\r";
+      }
+      // cout << endl;
+    #endif
     check_solution(best_sol->tour, best_sol->steps);
     end_run(run);
     // Check if the current run is the best one so far
@@ -74,7 +88,19 @@ int main(int argc, char *argv[])
 
   // Execute the command
   system(command);
+  // --- Call Python script to plot the fitness curve for the best run ---
+  printf("Plotting fitness curve from best run (Run %d)...\n", best_run);
 
+  // Construct the path to the fitness data file of the best run
+  char fitness_data_filename[CHAR_LEN];
+  sprintf(fitness_data_filename, "stats/%s/fitness_run_%d.txt", base_name, best_run);
+
+  // Construct a new command to call the same python script with different arguments
+  char fitness_command[CHAR_LEN * 3];
+  sprintf(fitness_command, "python ../plot_route.py plot_fitness \"%s\"", fitness_data_filename);
+
+  // Execute the command to generate the fitness plot
+  system(fitness_command);
   // Step 5: Free all allocated memory
   free_stats();
   free_heuristic();

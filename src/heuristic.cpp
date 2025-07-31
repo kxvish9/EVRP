@@ -1,5 +1,6 @@
 #include "heuristic.hpp"
 #include "EVRP.hpp"
+#include "stats.hpp"
 #include <iostream>  // For cout
 #include <vector>    // For std::vector
 #include <algorithm> // For std::shuffle
@@ -21,12 +22,211 @@ static const double COOLING_RATE = 0.99;
 static const int ITERATIONS_PER_CALL = 100;
 // Create a single, high-quality random number generator for the entire heuristic
 static std::mt19937 g(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+static double initial_temperature;                  // To remember the starting temperature
+static int iterations_without_improvement = 0;      // Counter for how long we've been stuck
+static const int REHEAT_ITERATION_THRESHOLD = 5000; // How many iterations to wait before reheating
 // ADDED: Reusable buffers to avoid memory allocation in loops
 static int *neighbor_tour = nullptr;
 static int *repair_buffer = nullptr;
 static double *g_nearest_station_energy_cache = nullptr;
 // ADDED: A proper uniform distribution for the acceptance check
 static std::uniform_real_distribution<double> g_unif_dist(0.0, 1.0);
+// heuristic.cpp
+
+// ... (keep ALL your existing code, including run_heuristic(), initialize_heuristic(), etc.) ...
+
+
+// =================================================================================
+// --- NEW SECTION: GENETIC ALGORITHM IMPLEMENTATION ---
+// =================================================================================
+
+// --- GA Parameters ---
+const int POPULATION_SIZE = 50;
+const double MUTATION_RATE = 0.1;
+const double CROSSOVER_RATE = 0.8;
+const int TOURNAMENT_SIZE = 3;
+
+// --- GA Data Structures ---
+static solution population[POPULATION_SIZE];
+static solution offspring[POPULATION_SIZE];
+
+// --- GA Helper Functions ---
+
+// Creates a random sequence of customers
+static void create_customer_permutation(int* tour, int& size) {
+    std::vector<int> customers;
+    for (int i = 1; i <= NUM_OF_CUSTOMERS; ++i) {
+        customers.push_back(i);
+    }
+    std::shuffle(customers.begin(), customers.end(), g);
+    
+    tour[0] = 0; // Start at depot
+    size = 1;
+    for (int customer : customers) {
+        tour[size++] = customer;
+    }
+    tour[size++] = 0; // End at depot
+}
+
+// Selects a parent from the population using tournament selection
+static const solution& tournament_selection() {
+    int best_idx = -1;
+    double best_fitness = DBL_MAX;
+    std::uniform_int_distribution<int> dist(0, POPULATION_SIZE - 1);
+
+    for (int i = 0; i < TOURNAMENT_SIZE; ++i) {
+        int idx = dist(g);
+        if (population[idx].tour_length < best_fitness) {
+            best_fitness = population[idx].tour_length;
+            best_idx = idx;
+        }
+    }
+    return population[best_idx];
+}
+
+// Performs Ordered Crossover (OX1) on customer permutations
+static void ordered_crossover(const solution& p1, const solution& p2, solution& child) {
+    std::vector<int> p1_cust, p2_cust;
+    for(int i = 0; i < p1.steps; ++i) if(p1.tour[i] > 0 && !is_charging_station(p1.tour[i])) p1_cust.push_back(p1.tour[i]);
+    
+    // If p1 had no customers, just copy p2
+    if(p1_cust.empty()){
+        child.steps = p2.steps;
+        std::copy(p2.tour, p2.tour + p2.steps, child.tour);
+        return;
+    }
+
+    for(int i = 0; i < p2.steps; ++i) if(p2.tour[i] > 0 && !is_charging_station(p2.tour[i])) p2_cust.push_back(p2.tour[i]);
+
+    int size = p1_cust.size();
+    std::uniform_int_distribution<int> dist(0, size - 1);
+    int start = dist(g);
+    int end = dist(g);
+    if (start > end) std::swap(start, end);
+
+    std::vector<int> child_cust(size, -1);
+    std::vector<bool> in_child(ACTUAL_PROBLEM_SIZE, false);
+
+    for (int i = start; i <= end; ++i) {
+        child_cust[i] = p1_cust[i];
+        in_child[p1_cust[i]] = true;
+    }
+    
+    int p2_idx = 0;
+    for (int i = 0; i < size; ++i) {
+        if (child_cust[i] == -1) {
+            while (p2_idx < p2_cust.size() && in_child[p2_cust[p2_idx]]) {
+                p2_idx++;
+            }
+            if(p2_idx < p2_cust.size()){
+                child_cust[i] = p2_cust[p2_idx];
+                p2_idx++;
+            }
+        }
+    }
+    
+    child.tour[0] = 0;
+    child.steps = 1;
+    for(int cust : child_cust) if(cust != -1) child.tour[child.steps++] = cust;
+    child.tour[child.steps++] = 0;
+}
+
+// Applies a simple swap mutation
+static void mutate(solution& sol) {
+    swap_operator(sol.tour, sol.tour, sol.steps, g);
+}
+
+
+// --- Main GA Functions ---
+
+void initialize_population() {
+    // Note: The main initialize_heuristic already allocates best_sol.
+    // We just need to allocate the population arrays.
+    static bool ga_initialized = false;
+    if (!ga_initialized) {
+        for (int i = 0; i < POPULATION_SIZE; ++i) {
+            population[i].tour = new int[ACTUAL_PROBLEM_SIZE * 2];
+            offspring[i].tour = new int[ACTUAL_PROBLEM_SIZE * 2];
+        }
+        ga_initialized = true;
+    }
+
+    for (int i = 0; i < POPULATION_SIZE; ++i) {
+        while (true) {
+            create_customer_permutation(population[i].tour, population[i].steps);
+            population[i].tour_length = get_solution_cost(population[i].tour, population[i].steps);
+            if (population[i].tour_length < DBL_MAX) break;
+        }
+    }
+    
+    // Ensure best_sol is updated with the initial best
+    for (int i = 0; i < POPULATION_SIZE; ++i) {
+        if (population[i].tour_length < best_sol->tour_length) {
+            best_sol->tour_length = population[i].tour_length;
+            best_sol->steps = population[i].steps;
+            std::copy(population[i].tour, population[i].tour + population[i].steps, best_sol->tour);
+        }
+    }
+}
+
+void run_ga_generation() {
+    // Elitism: copy the best individual
+    int best_idx = 0;
+    for (int i = 1; i < POPULATION_SIZE; ++i) {
+        if (population[i].tour_length < population[best_idx].tour_length) best_idx = i;
+    }
+    std::copy(population[best_idx].tour, population[best_idx].tour + population[best_idx].steps, offspring[0].tour);
+    offspring[0].steps = population[best_idx].steps;
+    offspring[0].tour_length = population[best_idx].tour_length;
+
+    // Create the rest of the offspring
+    for (int i = 1; i < POPULATION_SIZE; ++i) {
+        const solution& p1 = tournament_selection();
+        const solution& p2 = tournament_selection();
+        
+        solution child;
+        child.tour = offspring[i].tour; 
+
+        if (g_unif_dist(g) < CROSSOVER_RATE) {
+            ordered_crossover(p1, p2, child);
+        } else {
+            child.steps = p1.steps;
+            std::copy(p1.tour, p1.tour + p1.steps, child.tour);
+        }
+
+        if (g_unif_dist(g) < MUTATION_RATE) {
+            mutate(child);
+        }
+
+        double child_fitness = get_solution_cost(child.tour, child.steps);
+        if(child_fitness >= DBL_MAX) {
+            // If child is infeasible after repair, replace it with its first parent
+            offspring[i].steps = p1.steps;
+            offspring[i].tour_length = p1.tour_length;
+            std::copy(p1.tour, p1.tour + p1.steps, offspring[i].tour);
+        } else {
+             offspring[i].steps = child.steps;
+             offspring[i].tour_length = child_fitness;
+        }
+    }
+
+    // Replace old population
+    for (int i = 0; i < POPULATION_SIZE; ++i) {
+        population[i].steps = offspring[i].steps;
+        population[i].tour_length = offspring[i].tour_length;
+        std::copy(offspring[i].tour, offspring[i].tour + offspring[i].steps, population[i].tour);
+    }
+
+    // Update overall best solution
+    for (int i = 0; i < POPULATION_SIZE; ++i) {
+        if (population[i].tour_length < best_sol->tour_length) {
+            best_sol->tour_length = population[i].tour_length;
+            best_sol->steps = population[i].steps;
+            std::copy(population[i].tour, population[i].tour + population[i].steps, best_sol->tour);
+        }
+    }
+    record_fitness(get_evals(), best_sol->tour_length);
+}
 // --- Helper Functions ---
 static void populate_nearest_station_cache()
 {
@@ -70,6 +270,121 @@ const char *get_base_filename(const char *path)
 // REPLACEMENT: A more robust and clearer version of make_feasible
 // Debug-enabled version of make_feasible
 // Calculates the energy needed to travel from a node to the nearest charging station.
+#define OPERATOR_CHOICE 2
+
+// OPERATOR 1: The original 2-Opt Swap
+static void two_opt_operator(int *neighbor_buffer, const int *tour, int tour_size, std::mt19937 &generator)
+{
+    std::copy(tour, tour + tour_size, neighbor_buffer);
+    if (tour_size <= 3)
+        return;
+
+    std::uniform_int_distribution<int> distribution(1, tour_size - 2);
+    int idx1 = distribution(generator);
+    int idx2 = distribution(generator);
+    while (idx1 == idx2)
+    {
+        idx2 = distribution(generator);
+    }
+    if (idx1 > idx2)
+        std::swap(idx1, idx2);
+    two_opt_swap(neighbor_buffer, tour_size, idx1, idx2);
+}
+
+// OPERATOR 2: A simple Customer Swap
+static void swap_operator(int *neighbor_buffer, const int *tour, int tour_size, std::mt19937 &generator)
+{
+    std::copy(tour, tour + tour_size, neighbor_buffer);
+    if (tour_size <= 3)
+        return;
+
+    std::uniform_int_distribution<int> dist(1, tour_size - 2);
+    int idx1, idx2;
+    int attempts = 0;
+    const int max_attempts = 100;
+
+    do
+    {
+        idx1 = dist(generator);
+        idx2 = dist(generator);
+        attempts++;
+    } while (attempts < max_attempts && (idx1 == idx2 || is_charging_station(neighbor_buffer[idx1]) || neighbor_buffer[idx1] == DEPOT || is_charging_station(neighbor_buffer[idx2]) || neighbor_buffer[idx2] == DEPOT));
+
+    if (attempts < max_attempts)
+    {
+        std::swap(neighbor_buffer[idx1], neighbor_buffer[idx2]);
+    }
+}
+
+// OPERATOR 3: Ruin and Recreate (Large Neighborhood Search)
+static void ruin_and_recreate_operator(int *neighbor_buffer, const int *tour, int tour_size, std::mt19937 &generator)
+{
+    std::vector<int> temp_tour(tour, tour + tour_size);
+
+    int num_customers = 0;
+    for (int node : temp_tour)
+        if (node > 0 && !is_charging_station(node))
+            num_customers++;
+
+    if (num_customers < 2)
+    {
+        std::copy(tour, tour + tour_size, neighbor_buffer);
+        return;
+    }
+    int num_to_remove = std::max(2, static_cast<int>(num_customers * 0.20));
+
+    std::vector<int> customer_indices;
+    for (int i = 1; i < temp_tour.size() - 1; ++i)
+    {
+        if (temp_tour[i] > 0 && !is_charging_station(temp_tour[i]))
+        {
+            customer_indices.push_back(i);
+        }
+    }
+    std::shuffle(customer_indices.begin(), customer_indices.end(), generator);
+
+    std::vector<int> removed_customers;
+    std::vector<int> indices_to_remove;
+    for (int i = 0; i < std::min((int)customer_indices.size(), num_to_remove); ++i)
+    {
+        indices_to_remove.push_back(customer_indices[i]);
+    }
+    std::sort(indices_to_remove.rbegin(), indices_to_remove.rend());
+
+    for (int idx : indices_to_remove)
+    {
+        removed_customers.push_back(temp_tour[idx]);
+        temp_tour.erase(temp_tour.begin() + idx);
+    }
+
+    for (int customer_to_insert : removed_customers)
+    {
+        double min_cost_increase = DBL_MAX;
+        int best_insertion_pos = -1;
+
+        for (int i = 0; i < temp_tour.size() - 1; ++i)
+        {
+            double cost_increase = get_distance(temp_tour[i], customer_to_insert) + get_distance(customer_to_insert, temp_tour[i + 1]) - get_distance(temp_tour[i], temp_tour[i + 1]);
+            if (cost_increase < min_cost_increase)
+            {
+                min_cost_increase = cost_increase;
+                best_insertion_pos = i + 1;
+            }
+        }
+
+        if (best_insertion_pos != -1)
+        {
+            temp_tour.insert(temp_tour.begin() + best_insertion_pos, customer_to_insert);
+        }
+        else
+        {
+            temp_tour.insert(temp_tour.end() - 1, customer_to_insert);
+        }
+    }
+    std::copy(temp_tour.begin(), temp_tour.end(), neighbor_buffer);
+}
+
+// --------------------------------------------------------------------------
 static double get_energy_to_reach_nearest_station(int from_node)
 {
     return g_nearest_station_energy_cache[from_node];
@@ -80,7 +395,7 @@ static bool make_feasible(int *tour, int &size)
     feasible_tour.push_back(0); // Start at Depot
 
     double current_demand = 0.0;
-    double current_energy = BATTERY_CAPACITY;
+    double remaining_battery = BATTERY_CAPACITY;
 
     // Iterate through the destinations of the original tour
     for (int i = 1; i < size; ++i)
@@ -88,16 +403,16 @@ static bool make_feasible(int *tour, int &size)
         int to_node = tour[i];
         int from_node = feasible_tour.back();
         double escape_energy = get_energy_to_reach_nearest_station(to_node);
-        double energy_at_destination = current_energy - get_energy_consumption(from_node, to_node);
+        double energy_at_destination = remaining_battery - get_energy_consumption(from_node, to_node);
 
         if (energy_at_destination < escape_energy)
         {
             // If we won't have enough energy to escape from the destination, refuel now.
-            int cs = find_best_charging_station(from_node, to_node, current_energy);
+            int cs = find_best_charging_station(from_node, to_node, remaining_battery);
             if (cs != -1)
             {
                 feasible_tour.push_back(cs);
-                current_energy = BATTERY_CAPACITY;
+                remaining_battery = BATTERY_CAPACITY;
                 from_node = cs; // Update our current location
             }
             else
@@ -111,15 +426,15 @@ static bool make_feasible(int *tour, int &size)
         {
 
             // Check if we have enough energy to get to the depot
-            if (current_energy < get_energy_consumption(from_node, 0))
+            if (remaining_battery < get_energy_consumption(from_node, 0))
             {
                 // Not enough energy to reach the depot, so we must find a CS first.
-                int cs = find_best_charging_station(from_node, 0, current_energy);
+                int cs = find_best_charging_station(from_node, 0, remaining_battery);
                 if (cs != -1)
                 {
                     feasible_tour.push_back(cs);
-                    current_energy = BATTERY_CAPACITY; // Recharged at CS
-                    from_node = cs;                    // Update our current location
+                    remaining_battery = BATTERY_CAPACITY; // Recharged at CS
+                    from_node = cs;                       // Update our current location
                 }
                 else
                 {
@@ -129,21 +444,21 @@ static bool make_feasible(int *tour, int &size)
             feasible_tour.push_back(0);
             current_demand = 0.0;
             // IMPORTANT: Upon arrival at the depot, energy is fully restored for the NEXT trip.
-            current_energy = BATTERY_CAPACITY;
+            remaining_battery = BATTERY_CAPACITY;
             from_node = 0;
         }
         // --- Step 2: Handle Energy Failures for the main trip ---
         // Now, we calculate the trip from our current last location to the intended destination.
 
-        if (current_energy < get_energy_consumption(from_node, to_node))
+        if (remaining_battery < get_energy_consumption(from_node, to_node))
         {
             // Not enough energy, find a CS for the from_node -> to_node leg.
-            int cs = find_best_charging_station(from_node, to_node, current_energy);
+            int cs = find_best_charging_station(from_node, to_node, remaining_battery);
             if (cs != -1)
             {
                 feasible_tour.push_back(cs);
-                current_energy = BATTERY_CAPACITY; // Recharged at CS
-                from_node = cs;                    // Update our current location
+                remaining_battery = BATTERY_CAPACITY; // Recharged at CS
+                from_node = cs;                       // Update our current location
             }
             else
             {
@@ -152,7 +467,7 @@ static bool make_feasible(int *tour, int &size)
         }
 
         // --- Step 3: Execute the trip and update state ---
-        current_energy -= get_energy_consumption(from_node, to_node);
+        remaining_battery -= get_energy_consumption(from_node, to_node);
         feasible_tour.push_back(to_node);
 
         if (to_node > 0 && !is_charging_station(to_node))
@@ -246,7 +561,9 @@ void initialize_heuristic()
     std::copy(best_sol->tour, best_sol->tour + current_tour_size, current_tour);
     current_energy = best_sol->tour_length;
 
-    T = 1000.0;
+    initial_temperature = 1000.0; // Or calculate based on initial solution cost
+    T = initial_temperature;
+    iterations_without_improvement = 0;
 }
 // This new function attempts to repair an infeasible tour by inserting a charging station.
 // It returns 'true' if the repair was successful, and 'false' otherwise.
@@ -307,29 +624,21 @@ static double get_solution_cost(int *tour, int &size)
 // Creates a new, VALID neighbor solution by performing a 2-Opt swap.
 // CHANGED: This function now just performs the swap on the provided buffer.
 // It doesn't allocate memory or check for validity.
+// heuristic.cpp
+
+// REPLACE the old create_neighbor_solution function with this controller.
 static void create_neighbor_solution(int *neighbor_buffer, const int *tour, int tour_size, std::mt19937 &generator)
 {
-    if (tour_size <= 3)
-    {
-        // If we can't create a neighbor, just copy the original
-        std::copy(tour, tour + tour_size, neighbor_buffer);
-        return;
-    }
-
-    // Copy the original tour into the neighbor buffer to prepare for modification
-    std::copy(tour, tour + tour_size, neighbor_buffer);
-
-    // Generate indices and perform the swap
-    std::uniform_int_distribution<int> distribution(1, tour_size - 2);
-    int idx1 = distribution(generator);
-    int idx2 = distribution(generator);
-    while (idx1 == idx2)
-    {
-        idx2 = distribution(generator);
-    }
-    if (idx1 > idx2)
-        std::swap(idx1, idx2);
-    two_opt_swap(neighbor_buffer, tour_size, idx1, idx2);
+#if OPERATOR_CHOICE == 0
+    // Use the original 2-Opt operator
+    two_opt_operator(neighbor_buffer, tour, tour_size, generator);
+#elif OPERATOR_CHOICE == 1
+    // Use the simple customer swap operator
+    swap_operator(neighbor_buffer, tour, tour_size, generator);
+#elif OPERATOR_CHOICE == 2
+    // Use the powerful Ruin & Recreate operator
+    ruin_and_recreate_operator(neighbor_buffer, tour, tour_size, generator);
+#endif
 }
 // Attempts to merge two adjacent routes in the tour.
 // Returns a new tour array if successful, otherwise returns nullptr.
@@ -349,6 +658,7 @@ void run_heuristic()
         // Decide whether to accept the new solution
         if (neighbor_energy < DBL_MAX)
         {
+            record_fitness(get_evals(), neighbor_energy);
             if (neighbor_energy < current_energy)
             {
                 // Always accept better solutions
@@ -375,11 +685,22 @@ void run_heuristic()
             best_sol->tour_length = current_energy;
             std::copy(current_tour, current_tour + current_tour_size, best_sol->tour);
             best_sol->steps = current_tour_size;
+            iterations_without_improvement = 0;
+        }
+        else
+        {
+            // ADD THIS: If no improvement, increment the counter
+            iterations_without_improvement++;
         }
     }
 
     // Cool the temperature after each batch of iterations
     T *= COOLING_RATE;
+    if (iterations_without_improvement >= REHEAT_ITERATION_THRESHOLD)
+    {
+        T = initial_temperature * 0.6;      // Reheat to a high temperature
+        iterations_without_improvement = 0; // Reset the counter
+    }
 }
 
 void free_heuristic()
