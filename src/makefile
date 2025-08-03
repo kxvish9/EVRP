@@ -11,7 +11,7 @@ TARGET = main
 
 all: $(TARGET)
 
-$(TARGET): main.o heuristic.o EVRP.o stats.o
+$(TARGET): main.o heuristic.o EVRP.o stats.o config.o
 	$(CXX) $^ -o $(TARGET)
 
 main.o: main.cpp
@@ -22,6 +22,9 @@ heuristic.o: heuristic.cpp
 
 EVRP.o: EVRP.cpp
 	$(CXX) $(CXXFLAGS) -c EVRP.cpp
+
+config.o: config.cpp
+	$(CXX) $(CXXFLAGS) -c config.cpp
 
 stats.o: stats.cpp
 	$(CXX) $(CXXFLAGS) -c stats.cpp

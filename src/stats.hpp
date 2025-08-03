@@ -1,5 +1,4 @@
-#include "heuristic.hpp"
-#define MAX_TRIALS 	21 					
+#include "heuristic.hpp"					
 #define CHAR_LEN 100
 #ifndef STATS_HPP
 #define STATS_HPP

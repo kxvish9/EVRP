@@ -109,13 +109,13 @@ def plot_evrp_route(problem_file, tour_file, num_vehicles):
 
 def plot_fitness_curve(data_file):
     """
-    Plots the fitness (tour length) over evaluations from a given data file.
+    Plots the fitness over evaluations, showing the SA search path as "spikes"
+    extending from the best-so-far fitness line.
     """
     if not os.path.exists(data_file):
         print(f"Error: Fitness data file not found at {data_file}")
         return
 
-    # Read the tab-separated data
     try:
         data = pd.read_csv(data_file, sep='\t')
         if data.empty:
@@ -125,21 +125,35 @@ def plot_fitness_curve(data_file):
         print(f"Error reading data file: {e}")
         return
     
-    # --- Plotting ---
-    plt.figure(figsize=(12, 7))
-    plt.plot(data.iloc[:, 0], data.iloc[:, 1], linestyle='-', color='b', label='Best Fitness')
+    # --- Data Preparation (same as before) ---
+    evaluations = data.iloc[:, 0]
+    sa_trajectory = data.iloc[:, 1]
+    best_so_far_fitness = sa_trajectory.cummin()
     
+    # --- Plotting ---
+    plt.figure(figsize=(14, 8))
+
+    # Plot the best fitness line first, as it's our baseline
+    plt.plot(evaluations, best_so_far_fitness, linestyle='-', color='red', linewidth=2.0, label='Best Fitness Found', zorder=3)
+
+    # NEW: Plot vertical "spikes" from the best-fitness line up to the actual search points.
+    # This clearly shows how far the algorithm jumped for each accepted solution.
+    plt.vlines(evaluations, ymin=best_so_far_fitness, ymax=sa_trajectory, color='skyblue', alpha=0.7, label='Accepted Jumps', zorder=1)
+    
+    # NEW: Plot points at the top of the spikes to mark the exact energy level.
+    plt.scatter(evaluations, sa_trajectory, color='navy', s=8, zorder=2)
+
     problem_name = os.path.basename(os.path.dirname(os.path.dirname(data_file)))
     run_name = os.path.splitext(os.path.basename(data_file))[0].replace('_', ' ').replace('-', ' ').title()
     
-    plt.title(f'SA Fitness Convergence for {problem_name} ({run_name})')
+    plt.title(f'SA Search Analysis for {problem_name} ({run_name})')
     plt.xlabel('Fitness Evaluations')
-    plt.ylabel('Best Tour Length (Fitness)')
+    plt.ylabel('Tour Length (Fitness)')
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
     
-    # --- Saving the Plot ---
+    # --- Saving the Plot (logic remains the same) ---
     output_dir = os.path.join('../plots', problem_name)
     os.makedirs(output_dir, exist_ok=True)
     
@@ -149,6 +163,7 @@ def plot_fitness_curve(data_file):
     plt.savefig(save_path)
     print(f"Fitness plot saved to {save_path}")
     plt.close()
+
 
 if __name__ == "__main__":
     # Decide which function to run based on arguments

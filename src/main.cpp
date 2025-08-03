@@ -6,7 +6,7 @@
 #include "EVRP.hpp"
 #include "heuristic.hpp"
 #include "stats.hpp"
-#define ALGORITHM_CHOICE 0 
+#include "config.hpp"
 using namespace std;
 /*sets the termination conidition for your heuristic*/
 bool termination_condition(void)
@@ -21,9 +21,9 @@ bool termination_condition(void)
 int main(int argc, char *argv[])
 {
   // Safety check for command-line arguments
-  if (argc != 2)
+  if (argc != 3)
   {
-    cout << "Usage: ./main <problem_instance>" << endl;
+    cout << "Usage: ./main <problem_instance> <config_file>" << endl;
     return 1;
   }
   // Variables to track the best solution found across all runs
@@ -32,7 +32,15 @@ int main(int argc, char *argv[])
   char best_tour_filename[CHAR_LEN];
   int run;
   srand(time(NULL)); // Seed the C-style random generator once
-
+  try
+  {
+    load_config(argv[2]);
+  }
+  catch (const std::runtime_error &e) 
+  {
+    cout << "Error loading config: " << e.what() << endl;
+    return 1;
+  }
   // Step 1: Read the problem instance from file
   problem_instance = argv[1];
   read_problem(problem_instance);
@@ -41,28 +49,14 @@ int main(int argc, char *argv[])
   open_stats();
 
   // Step 3: Perform all trial runs
-  for (run = 1; run <= MAX_TRIALS; run++)
+  for (run = 1; run <= g_config.trial_runs; run++)
   {
     start_run(run);
-    #if ALGORITHM_CHOICE == 0 
-      initialize_heuristic();
-      // This fixed loop executes the heuristic for a set number of iterations
-      
-      while (!termination_condition())
-      {
-        run_heuristic();
-      }
-    #else // Run Genetic Algorithm
-      const int MAX_GENERATIONS = 500;
-      cout << "Running Genetic Algorithm..." << endl;
-      initialize_population();
-      for (int gen = 0; gen < MAX_GENERATIONS; gen++) {
-        run_ga_generation();
-        // Optional: print progress
-        // cout << "Generation: " << gen + 1 << " / " << MAX_GENERATIONS << " | Best: " << best_sol->tour_length << "\r";
-      }
-      // cout << endl;
-    #endif
+    initialize_heuristic();
+    while (!termination_condition())
+    {
+      run_heuristic();
+    }
     check_solution(best_sol->tour, best_sol->steps);
     end_run(run);
     // Check if the current run is the best one so far

@@ -6,6 +6,7 @@
 #include "EVRP.hpp"
 #include "stats.hpp"
 #include "heuristic.hpp"
+#include "config.hpp"
 using namespace std;
 
 // Used to output offline performance and population diversity
@@ -70,8 +71,8 @@ void end_run(int r)
 void open_stats(void)
 {
   // Initialize performance tracker
-  perf_of_trials = new double[MAX_TRIALS];
-  for (int i = 0; i < MAX_TRIALS; i++)
+  perf_of_trials = new double[g_config.trial_runs];
+  for (int i = 0; i < g_config.trial_runs; i++)
   {
     perf_of_trials[i] = 0.0;
   }
@@ -176,18 +177,18 @@ void save_tour(solution *sol, int run_number)
 
 void close_stats(void)
 {
-  double perf_mean_value = mean(perf_of_trials, MAX_TRIALS);
-  double perf_stdev_value = stdev(perf_of_trials, MAX_TRIALS, perf_mean_value);
+  double perf_mean_value = mean(perf_of_trials, g_config.trial_runs);
+  double perf_stdev_value = stdev(perf_of_trials, g_config.trial_runs, perf_mean_value);
 
   // Open the file one last time to write summary stats
   if ((log_performance = fopen(perf_filename, "w")) != NULL)
   {
     fprintf(log_performance, "Mean %f\n", perf_mean_value);
     fprintf(log_performance, "StDev %f\n", perf_stdev_value);
-    fprintf(log_performance, "Min %f\n", best_of_vector(perf_of_trials, MAX_TRIALS));
-    fprintf(log_performance, "Max %f\n", worst_of_vector(perf_of_trials, MAX_TRIALS));
+    fprintf(log_performance, "Min %f\n", best_of_vector(perf_of_trials, g_config.trial_runs));
+    fprintf(log_performance, "Max %f\n", worst_of_vector(perf_of_trials, g_config.trial_runs));
     fprintf(log_performance, "\n--- Raw Run Data ---\n");
-    for (int i = 0; i < MAX_TRIALS; i++)
+    for (int i = 0; i < g_config.trial_runs; i++)
     {
       fprintf(log_performance, "Run %d: %.2f\n", i + 1, perf_of_trials[i]);
     }
