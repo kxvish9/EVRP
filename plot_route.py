@@ -43,10 +43,7 @@ def parse_tour_file(filepath, num_vehicles):
     with open(filepath, 'r') as f:
         tour_str_list = f.read().strip().split()
 
-    # This single line robustly converts all occurrences of '0' to 1
-    # before converting the rest of the nodes to integers. This prevents any '0'
-    # from ever entering the tour list.
-    full_tour = [1 if node == '0' else int(node) for node in tour_str_list]
+    full_tour = [int(node) + 1 for node in tour_str_list]
     
     sub_routes = []
     start_idx = 0
@@ -75,7 +72,7 @@ def plot_evrp_route(problem_file, tour_file, num_vehicles):
 
     plt.figure(figsize=(14, 10))
 
-    # Plot all nodes first
+    # Plot all nodes first (REMOVED the plt.text call)
     for node_id, data in nodes.items():
         if data['type'] == 'depot':
             plt.plot(data['x'], data['y'], 'ks', markersize=12, label='Depot')
@@ -83,20 +80,21 @@ def plot_evrp_route(problem_file, tour_file, num_vehicles):
             plt.plot(data['x'], data['y'], 'g^', markersize=10, label='Station' if 'Station' not in plt.gca().get_legend_handles_labels()[1] else "")
         else:
             plt.plot(data['x'], data['y'], 'bo', markersize=8, label='Customer' if 'Customer' not in plt.gca().get_legend_handles_labels()[1] else "")
-        plt.text(data['x'], data['y'] + 1.5, str(node_id), fontsize=9, ha='center')
+        # The node ID text label that was here has been removed.
 
-    # Plot each sub-route with a different color
+    # Plot each sub-route with a single, consistent color (CHANGED)
     for i, route in enumerate(sub_routes):
         route_x = [nodes[node_id]['x'] for node_id in route]
         route_y = [nodes[node_id]['y'] for node_id in route]
-        color = plt.cm.viridis(i / max(1, len(sub_routes))) # Use a colormap for distinct colors
-        plt.plot(route_x, route_y, color=color, linestyle='-', marker='o', markersize=4, label=f'Route {i+1}')
+        # All routes are now plotted in gray. The label is set only once.
+        plt.plot(route_x, route_y, color='gray', linestyle='-', marker='o', markersize=4, label='Route' if i == 0 else "")
 
     plt.title(f'EVRP Solution for {os.path.basename(problem_file)} ({num_vehicles} Vehicles)')
     plt.xlabel('X Coordinate')
     plt.ylabel('Y Coordinate')
     plt.grid(True)
     
+    # This logic correctly handles the simplified legend.
     handles, labels = plt.gca().get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
     plt.legend(by_label.values(), by_label.keys())

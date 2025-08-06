@@ -58,9 +58,17 @@ void load_config(const std::string &filename)
                 g_config.termination_evals_factor = std::stol(value);
             }
             // --- SA Settings ---
-            else if (key == "SA_OPERATOR")
+            else if (key == "SA_WEIGHT_RUIN_RECREATE") // ADDED
             {
-                g_config.sa_operator_name = value;
+                g_config.sa_weight_ruin_recreate = std::stoi(value);
+            }
+            else if (key == "SA_WEIGHT_SWAP") // ADDED
+            {
+                g_config.sa_weight_swap = std::stoi(value);
+            }
+            else if (key == "SA_WEIGHT_REMOVE_STATION") // ADDED
+            {
+                g_config.sa_weight_remove_station = std::stoi(value);
             }
             else if (key == "SA_INITIAL_TEMPERATURE")
             {
@@ -72,20 +80,15 @@ void load_config(const std::string &filename)
             }
             else if (key == "SA_REHEAT_THRESHOLD")
             {
-                g_config.sa_reheat_threshold = std::stoi(value);
+                g_config.sa_reheat_threshold = std::stod(value);
             }
             else if (key == "SA_ITERATIONS_PER_CALL")
             {
                 g_config.sa_iterations_per_call = std::stoi(value);
             }
-            // --- Penalty Weights ---
-            else if (key == "PENALTY_WEIGHT_ENERGY")
+            else if (key == "SA_ADAPTIVE_THRESHOLD")
             {
-                g_config.penalty_weight_energy = std::stod(value);
-            }
-            else if (key == "PENALTY_WEIGHT_CAPACITY")
-            {
-                g_config.penalty_weight_capacity = std::stod(value);
+                g_config.sa_adaptive_threshold = std::stod(value);
             }
         }
     }
@@ -101,23 +104,7 @@ void load_config(const std::string &filename)
         throw std::runtime_error("Unknown algorithm in config file: " + g_config.algorithm_name);
     }
 
-    std::transform(g_config.sa_operator_name.begin(), g_config.sa_operator_name.end(), g_config.sa_operator_name.begin(), ::toupper);
-    if (g_config.sa_operator_name == "TWO_OPT")
-    {
-        g_config.sa_operator = TWO_OPT;
-    }
-    else if (g_config.sa_operator_name == "SWAP")
-    {
-        g_config.sa_operator = SWAP;
-    }
-    else if (g_config.sa_operator_name == "RUIN_RECREATE")
-    {
-        g_config.sa_operator = RUIN_RECREATE;
-    }
-    else
-    {
-        throw std::runtime_error("Unknown SA operator in config file: " + g_config.sa_operator_name);
-    }
+    // REMOVED the logic for parsing SA_OPERATOR enum
 
     file.close();
 }

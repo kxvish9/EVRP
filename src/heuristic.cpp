@@ -25,7 +25,7 @@ static int ITERATIONS_PER_CALL;
 static std::mt19937 g(std::chrono::high_resolution_clock::now().time_since_epoch().count());
 static double initial_temperature;         // To remember the starting temperature
 static int iterations_without_improvement; // Counter for how long we've been stuck
-static int REHEAT_ITERATION_THRESHOLD;     // Loaded from config
+static long REHEAT_ITERATION_THRESHOLD;     // Loaded from config
 // ADDED: Reusable buffers to avoid memory allocation in loops
 static int *neighbor_tour = nullptr;
 static int *repair_buffer = nullptr;
@@ -51,10 +51,7 @@ static void populate_nearest_station_cache()
         g_nearest_station_energy_cache[i] = min_energy;
     }
 }
-static void two_opt_swap(int *tour, int size, int i, int j)
-{
-    std::reverse(tour + i, tour + j + 1);
-}
+
 // Takes a list of customers and partitions them into routes for multiple vehicles
 const char *get_base_filename(const char *path)
 {
@@ -71,61 +68,84 @@ const char *get_base_filename(const char *path)
     return path;
 }
 
-static void two_opt_operator(int *neighbor_buffer, const int *tour, int tour_size, std::mt19937 &generator)
-{
-    std::copy(tour, tour + tour_size, neighbor_buffer);
-    if (tour_size <= 3)
-        return;
-
-    std::uniform_int_distribution<int> distribution(1, tour_size - 2);
-    int idx1 = distribution(generator);
-    int idx2 = distribution(generator);
-    while (idx1 == idx2)
-    {
-        idx2 = distribution(generator);
-    }
-    if (idx1 > idx2)
-        std::swap(idx1, idx2);
-    two_opt_swap(neighbor_buffer, tour_size, idx1, idx2);
-}
-
 // OPERATOR 2: A simple Customer Swap
-static void swap_operator(int *neighbor_buffer, const int *tour, int tour_size, std::mt19937 &generator)
+// OPERATOR 2: A simple Customer Swap (Robust Version)
+static void swap_operator(int *neighbor_buffer, const int *tour, int &size, std::mt19937 &generator)
 {
-    std::copy(tour, tour + tour_size, neighbor_buffer);
-    if (tour_size <= 3)
-        return;
+    std::copy(tour, tour + size, neighbor_buffer);
 
-    std::uniform_int_distribution<int> dist(1, tour_size - 2);
-    int idx1, idx2;
-    int attempts = 0;
-    const int max_attempts = 100;
-
-    do
+    // Step 1: Create a list of indices for all swappable nodes (i.e., customers).
+    std::vector<int> customer_indices;
+    for (int i = 1; i < size - 1; ++i)
     {
-        idx1 = dist(generator);
-        idx2 = dist(generator);
-        attempts++;
-    } while (attempts < max_attempts && (idx1 == idx2 || is_charging_station(neighbor_buffer[idx1]) || neighbor_buffer[idx1] == DEPOT || is_charging_station(neighbor_buffer[idx2]) || neighbor_buffer[idx2] == DEPOT));
-
-    if (attempts < max_attempts)
-    {
-        std::swap(neighbor_buffer[idx1], neighbor_buffer[idx2]);
+        // The loop bounds already exclude start/end depots. Now, also exclude stations.
+        if (!is_charging_station(tour[i]))
+        {
+            customer_indices.push_back(i);
+        }
     }
+
+    // Safeguard: If there are fewer than two customers, a swap is impossible.
+    if (customer_indices.size() < 2)
+    {
+        return; // Do nothing.
+    }
+
+    // Step 2: Shuffle the list of valid customer indices.
+    std::shuffle(customer_indices.begin(), customer_indices.end(), generator);
+
+    // Step 3: Pick the first two distinct indices from the shuffled list.
+    int idx1 = customer_indices[0];
+    int idx2 = customer_indices[1];
+
+    // Step 4: Perform the swap.
+    std::swap(neighbor_buffer[idx1], neighbor_buffer[idx2]);
+}
+static void remove_station_operator(int *neighbor_buffer, const int *tour, int &size, std::mt19937 &generator)
+{
+    std::vector<int> station_indices;
+    // Find all charging stations in the current tour (excluding start/end depots)
+    for (int i = 1; i < size - 1; ++i)
+    {
+        if (is_charging_station(tour[i]))
+        {
+            station_indices.push_back(i);
+        }
+    }
+
+    // If there are no stations to remove, do nothing.
+    if (station_indices.empty())
+    {
+        std::copy(tour, tour + size, neighbor_buffer);
+        return;
+    }
+
+    // Pick a random station to remove
+    std::uniform_int_distribution<int> dist(0, station_indices.size() - 1);
+    int index_to_remove = station_indices[dist(generator)];
+
+    // Use std::vector for easy removal
+    std::vector<int> temp_tour(tour, tour + size);
+    temp_tour.erase(temp_tour.begin() + index_to_remove);
+
+    // Copy the result to the output buffer
+    // The size is not passed by reference here, but get_solution_cost will handle the size change.
+    size = temp_tour.size();
+    std::copy(temp_tour.begin(), temp_tour.end(), neighbor_buffer);
 }
 // OPERATOR 3: Ruin and Recreate (Large Neighborhood Search)
-static void ruin_and_recreate_operator(int *neighbor_buffer, const int *tour, int tour_size, std::mt19937 &generator)
+static void ruin_and_recreate_operator(int *neighbor_buffer, const int *tour, int &size, std::mt19937 &generator)
 {
-    std::vector<int> temp_tour(tour, tour + tour_size);
+    std::vector<int> temp_tour(tour, tour + size);
 
     int num_customers = 0;
     for (int node : temp_tour)
-        if (node != DEPOT && !is_charging_station(node))
+        if (!is_charging_station(node))
             num_customers++;
 
     if (num_customers < 2)
     {
-        std::copy(tour, tour + tour_size, neighbor_buffer);
+        std::copy(tour, tour + size, neighbor_buffer);
         return;
     }
     int num_to_remove = std::max(2, static_cast<int>(num_customers * 0.20));
@@ -133,7 +153,7 @@ static void ruin_and_recreate_operator(int *neighbor_buffer, const int *tour, in
     std::vector<int> customer_indices;
     for (int i = 1; i < temp_tour.size() - 1; ++i)
     {
-        if (temp_tour[i] != DEPOT && !is_charging_station(temp_tour[i]))
+        if (!is_charging_station(temp_tour[i]))
         {
             customer_indices.push_back(i);
         }
@@ -178,171 +198,198 @@ static void ruin_and_recreate_operator(int *neighbor_buffer, const int *tour, in
             temp_tour.insert(temp_tour.end() - 1, customer_to_insert);
         }
     }
-    std::copy(temp_tour.begin(), temp_tour.end(), neighbor_buffer);
-}
-// Penalized cost function
-static double get_penalized_cost(const int *tour, int size) {
-    double tour_length = 0.0;
-    double capacity_violation = 0.0;
-    double energy_violation = 0.0;
-    double current_load = 0.0;
-    double current_energy = BATTERY_CAPACITY;
-
-    for (int i = 0; i < size - 1; ++i) {
-        int from = tour[i];
-        int to = tour[i + 1];
-
-        tour_length += get_distance(from, to);
-        double energy_needed = get_energy_consumption(from, to);
-
-        if (current_energy < energy_needed) {
-            energy_violation += (energy_needed - current_energy);
-            current_energy = 0;
-        } else {
-            current_energy -= energy_needed;
+    for (size_t i = 0; i + 1 < temp_tour.size();)
+    {
+        if (temp_tour[i] == temp_tour[i + 1] && is_charging_station(temp_tour[i]))
+        {
+            temp_tour.erase(temp_tour.begin() + i);
+            // After erasing, don't increment i because we need to re-check
+            // the new element at the current position.
         }
-
-        if (!is_charging_station(to) && to != DEPOT) {
-            current_load += get_customer_demand(to);
-            if (current_load > MAX_CAPACITY) {
-                capacity_violation += (current_load - MAX_CAPACITY);
-            }
-        }
-
-        if (to == DEPOT) {
-            current_load = 0;
-            current_energy = BATTERY_CAPACITY;
-        } else if (is_charging_station(to)) {
-            current_energy = BATTERY_CAPACITY;
+        else
+        {
+            i++; // Only move to the next position if no duplicate was found.
         }
     }
-
-    return tour_length + (g_config.penalty_weight_energy * energy_violation) + (g_config.penalty_weight_capacity * capacity_violation);
+    size = temp_tour.size();
+    std::copy(temp_tour.begin(), temp_tour.end(), neighbor_buffer);
 }
-// --------------------------------------------------------------------------
+
 static double get_energy_to_reach_nearest_station(int from_node)
 {
     return g_nearest_station_energy_cache[from_node];
 }
 static bool make_feasible(int *tour, int &size)
 {
-    std::vector<int> feasible_tour;
-    feasible_tour.push_back(DEPOT); // Start at Depot
-
+    // --- PHASE 1: CAPACITY REPAIR ---
+    // First, build a new tour that inserts depot visits wherever cargo
+    // capacity would be exceeded. This pass preserves any existing charging
+    // stations from the input tour but does not consider energy.
+    std::vector<int> capacity_tour;
+    capacity_tour.push_back(DEPOT);
     double current_demand = 0.0;
-    double remaining_battery = BATTERY_CAPACITY;
 
-    // Iterate through the destinations of the original tour
     for (int i = 1; i < size; ++i)
     {
-        int to_node = tour[i];
-        int from_node = feasible_tour.back();
-        double escape_energy = get_energy_to_reach_nearest_station(to_node);
-        double energy_at_destination = remaining_battery - get_energy_consumption(from_node, to_node);
-
-        if (energy_at_destination < escape_energy)
+        int current_node = tour[i];
+        if (current_node == DEPOT)
         {
-            // If we won't have enough energy to escape from the destination, refuel now.
-            int cs = find_best_charging_station(from_node, to_node, remaining_battery);
-            if (cs != -1)
+            continue; // Ignore depots in the tour, we'll add them as needed.
+        }
+
+        if (is_charging_station(current_node))
+        {
+            capacity_tour.push_back(current_node); // Preserve existing charging stations.
+        }
+        else
+        { // Node is a customer
+            if (current_demand + get_customer_demand(current_node) > MAX_CAPACITY)
             {
-                feasible_tour.push_back(cs);
-                remaining_battery = BATTERY_CAPACITY;
-                from_node = cs; // Update our current location
-                if(cs == DEPOT)
+                capacity_tour.push_back(DEPOT); // Insert a depot visit before the customer.
+                current_demand = 0.0;           // Reset demand.
+            }
+            capacity_tour.push_back(current_node); // Add the customer.
+            current_demand += get_customer_demand(current_node);
+        }
+    }
+    capacity_tour.push_back(DEPOT); // Ensure the tour always ends at the depot.
+
+    // --- PHASE 2: ENERGY REPAIR ---
+    // With a capacity-feasible tour, this pass inserts charging stations to
+    // ensure the battery never runs out. It uses a forward-looking check to
+    // prevent getting stranded.
+    std::vector<int> final_tour;
+    final_tour.push_back(DEPOT);
+    double remaining_battery = BATTERY_CAPACITY;
+
+    for (size_t i = 1; i < capacity_tour.size(); ++i)
+    {
+        int from_node = final_tour.back();
+        int to_node = capacity_tour[i];
+
+        // Calculate the energy state *after* the next trip.
+        double energy_to_reach_dest = get_energy_consumption(from_node, to_node);
+        double energy_at_dest = remaining_battery - energy_to_reach_dest;
+        if (is_charging_station(to_node) && energy_at_dest > 0)
+        {
+            // If we reach a charging station, we can reset the battery.
+            energy_at_dest = BATTERY_CAPACITY;
+        }
+        double escape_energy = get_energy_to_reach_nearest_station(to_node);
+
+        // Do we need to refuel to complete the trip AND escape the destination?
+        if (energy_at_dest < escape_energy)
+        {
+            // Find the best charging station to visit *before* 'to_node'.
+            int best_cs = find_best_charging_station(from_node, to_node, remaining_battery);
+            if (best_cs != -1)
+            {
+                // Detour to the charging station.
+                if (best_cs == to_node || best_cs == from_node)
                 {
-                    current_demand = 0.0; // Reset demand when we reach the depot
+                    return false; // Unfixable: No detour needed, but energy is insufficient.
                 }
+                final_tour.push_back(best_cs);
+                remaining_battery = BATTERY_CAPACITY; // Battery is full upon arrival.
+                from_node = best_cs;                  // Our new location is the charging station.
             }
             else
             {
-                return false; // The risky situation is unfixable.
+                return false; // Unfixable: No suitable charging station found.
             }
         }
-        // --- Step 1: Handle Capacity Failures First ---
-        // Does adding the NEXT customer exceed capacity? If so, we must go to the depot NOW.
-        if ((to_node != DEPOT && !is_charging_station(to_node)) && (current_demand + get_customer_demand(to_node) > MAX_CAPACITY))
+
+        // Now, execute the trip from our current location ('from_node') to the destination ('to_node').
+        double energy_for_final_leg = get_energy_consumption(from_node, to_node);
+
+        // This is a safeguard; it should not fail if find_best_charging_station is correct.
+        if (remaining_battery < energy_for_final_leg)
         {
-            // Check if we have enough energy to get to the depot
-            if (remaining_battery < get_energy_consumption(from_node, DEPOT))
-            {
-                // Not enough energy to reach the depot, so we must find a CS first.
-                int cs = find_best_charging_station(from_node, DEPOT, remaining_battery);
-                if (cs != -1)
-                {
-                    feasible_tour.push_back(cs);
-                    remaining_battery = BATTERY_CAPACITY; // Recharged at CS
-                    from_node = cs;                       // Update our current location
-                }
-                else
-                {
-                    return false; // Can't find a CS to get to the depot, tour is unfixable
-                }
-            }
-            feasible_tour.push_back(DEPOT);
-            current_demand = 0.0;
-            // IMPORTANT: Upon arrival at the depot, energy is fully restored for the NEXT trip.
+            return false;
+        }
+
+        remaining_battery -= energy_for_final_leg;
+        final_tour.push_back(to_node);
+        // If the destination is a refueling stop, reset the battery for the next leg.
+        if (is_charging_station(to_node))
+        {
             remaining_battery = BATTERY_CAPACITY;
-            from_node = DEPOT;
-        }
-
-        // --- Step 3: Execute the trip and update state ---
-        remaining_battery -= get_energy_consumption(from_node, to_node);
-        feasible_tour.push_back(to_node);
-
-        if (to_node > 0 && !is_charging_station(to_node))
-        {
-            current_demand += get_customer_demand(to_node);
         }
     }
 
-    // --- Final Step: Copy the valid tour back ---
-    if (feasible_tour.size() >= (size_t)(ACTUAL_PROBLEM_SIZE * 2))
-        return false;
-    size = feasible_tour.size();
-    std::copy(feasible_tour.begin(), feasible_tour.end(), tour);
+    // --- FINALIZATION: Copy the valid tour back ---
+    if (final_tour.size() >= (size_t)(ACTUAL_PROBLEM_SIZE * 2))
+    {
+        return false; // Tour is excessively long, likely an error state.
+    }
+
+    size = final_tour.size();
+    std::copy(final_tour.begin(), final_tour.end(), tour);
     return true;
 }
 static void create_initial_solution()
 {
     std::vector<int> unvisited_customers;
-    for (int i = 0; i < NUM_OF_CUSTOMERS; ++i)
+    for (int i = 1; i <= NUM_OF_CUSTOMERS; ++i)
     {
-        unvisited_customers.push_back(i + 1);
+        unvisited_customers.push_back(i);
     }
+    // Start with a random customer to break ties
+    std::shuffle(unvisited_customers.begin(), unvisited_customers.end(), g);
 
-    best_sol->tour[0] = DEPOT;
-    best_sol->steps = 1;
-
-    std::uniform_int_distribution<int> dist(0, unvisited_customers.size() - 1);
-    int first_customer_idx = dist(g);
-    int current_node = unvisited_customers[first_customer_idx];
-    best_sol->tour[best_sol->steps++] = current_node;
-    unvisited_customers[first_customer_idx] = unvisited_customers.back();
+    // 1. Create the initial tour with one customer: DEPOT -> C1 -> DEPOT
+    std::vector<int> tour;
+    tour.push_back(DEPOT);
+    tour.push_back(unvisited_customers.back());
     unvisited_customers.pop_back();
+    tour.push_back(DEPOT);
 
+    // 2. Iteratively insert the remaining customers
     while (!unvisited_customers.empty())
     {
-        double min_dist = DBL_MAX;
-        int nearest_customer_idx = -1;
+        double min_cost = DBL_MAX;
+        int best_customer_idx = -1;
+        int best_insertion_pos = -1;
 
-        for (size_t i = 0; i < unvisited_customers.size(); ++i)
+        // For every unvisited customer...
+        for (int i = 0; i < unvisited_customers.size(); ++i)
         {
-            double dist = get_distance(current_node, unvisited_customers[i]);
-            if (dist < min_dist)
+            int customer_to_insert = unvisited_customers[i];
+
+            // ...find the cheapest place to insert it in the current tour
+            for (int j = 0; j < tour.size() - 1; ++j)
             {
-                min_dist = dist;
-                nearest_customer_idx = i;
+                int node_before = tour[j];
+                int node_after = tour[j + 1];
+
+                // Calculate the cost of inserting the customer between these two nodes
+                double insertion_cost = get_distance(node_before, customer_to_insert) + get_distance(customer_to_insert, node_after) - get_distance(node_before, node_after);
+
+                if (insertion_cost < min_cost)
+                {
+                    min_cost = insertion_cost;
+                    best_customer_idx = i;
+                    best_insertion_pos = j + 1;
+                }
             }
         }
 
-        current_node = unvisited_customers[nearest_customer_idx];
-        best_sol->tour[best_sol->steps++] = current_node;
-        unvisited_customers[nearest_customer_idx] = unvisited_customers.back();
-        unvisited_customers.pop_back();
+        // 3. Perform the best insertion found in this iteration
+        if (best_customer_idx != -1)
+        {
+            tour.insert(tour.begin() + best_insertion_pos, unvisited_customers[best_customer_idx]);
+            unvisited_customers.erase(unvisited_customers.begin() + best_customer_idx);
+        }
+        else
+        {
+            // Failsafe in case no insertion is found (should not happen)
+            break;
+        }
     }
 
-    best_sol->tour[best_sol->steps++] = DEPOT;
+    // 4. Copy the final tour to the solution object
+    best_sol->steps = tour.size();
+    std::copy(tour.begin(), tour.end(), best_sol->tour);
 }
 
 void initialize_heuristic()
@@ -364,7 +411,7 @@ void initialize_heuristic()
         create_initial_solution();
 
         // 2. Make it feasible and calculate its real-world cost.
-        best_sol->tour_length = get_penalized_cost(best_sol->tour, best_sol->steps);
+        best_sol->tour_length = get_solution_cost(best_sol->tour, best_sol->steps);
 
         // 3. If successful, break the loop. Otherwise, it will retry automatically.
         if (best_sol->tour_length < DBL_MAX)
@@ -390,30 +437,38 @@ void initialize_heuristic()
 static int find_best_charging_station(int from_node, int to_node, double energy_at_from)
 {
     int best_cs = -1;
-    double min_detour = DBL_MAX;
-    if (get_energy_consumption(from_node, DEPOT) <= energy_at_from)
+    // We now look for the maximum "score" instead of the minimum detour.
+    double max_score = -DBL_MAX;
+
+    // A single loop to check all charging stations, including the depot.
+    for (int cs_id = 0; cs_id < ACTUAL_PROBLEM_SIZE; cs_id++)
     {
-        // After reaching depot, battery is full. Check if we can then reach the destination.
-        if (BATTERY_CAPACITY >= get_energy_consumption(DEPOT, to_node))
+
+        if (is_charging_station(cs_id))
         {
-            min_detour = get_distance(from_node, DEPOT) + get_distance(DEPOT, to_node) - get_distance(from_node, to_node);
-            best_cs = DEPOT;
-        }
-    }
-    // Find the best charging station to insert.
-    for (int cs_id = NUM_OF_CUSTOMERS + 1; cs_id < ACTUAL_PROBLEM_SIZE; cs_id++)
-    {
-        // Check if we can reach the station from our current location
-        if (get_energy_consumption(from_node, cs_id) <= (energy_at_from))
-        {
-            // Check if we can reach the final destination AFTER charging at the station
-            if (BATTERY_CAPACITY >= get_energy_consumption(cs_id, to_node))
+            if (cs_id == from_node)
+                continue;
+            // Check if we can reach the station from our current location
+            if (get_energy_consumption(from_node, cs_id) <= energy_at_from)
             {
-                double detour_dist = get_distance(from_node, cs_id) + get_distance(cs_id, to_node) - get_distance(from_node, to_node);
-                if (detour_dist < min_detour)
+                // Check if we can reach the final destination AFTER charging at the station
+                if (BATTERY_CAPACITY >= get_energy_consumption(cs_id, to_node))
                 {
-                    min_detour = detour_dist;
-                    best_cs = cs_id;
+                    // --- NEW "LOOK-AHEAD" LOGIC ---
+                    // 1. Calculate the penalty (the detour distance)
+                    double detour_penalty = get_distance(from_node, cs_id) + get_distance(cs_id, to_node) - get_distance(from_node, to_node);
+
+                    // 2. Calculate the reward (how much energy we have left at the *next* customer)
+                    double energy_reward = BATTERY_CAPACITY - get_energy_consumption(cs_id, to_node);
+
+                    // 3. The best station is one that has a high reward and a low penalty.
+                    double score = energy_reward - detour_penalty;
+
+                    if (score > max_score)
+                    {
+                        max_score = score;
+                        best_cs = cs_id;
+                    }
                 }
             }
         }
@@ -422,7 +477,7 @@ static int find_best_charging_station(int from_node, int to_node, double energy_
 }
 
 // ADD THIS MISSING FUNCTION
-static double get_solution_cost(int *tour, int &size)
+double get_solution_cost(int *tour, int &size)
 {
     // Use the global repair_buffer to work on a copy.
     int original_size = size;
@@ -444,19 +499,53 @@ static double get_solution_cost(int *tour, int &size)
     }
 }
 
-static void create_neighbor_solution(int *neighbor_buffer, const int *tour, int tour_size, std::mt19937 &generator)
+static void create_neighbor_solution(int *neighbor_buffer, const int *tour, int &size, std::mt19937 &generator)
 {
-    switch (g_config.sa_operator)
+    // Get operator weights from the global configuration
+    int w_ruin_recreate, w_swap, w_remove_station;
+    double temp_ratio = T / initial_temperature;
+
+    if (temp_ratio > g_config.sa_adaptive_threshold)
     {
-    case TWO_OPT:
-        two_opt_operator(neighbor_buffer, tour, tour_size, generator);
-        break;
-    case SWAP:
-        swap_operator(neighbor_buffer, tour, tour_size, generator);
-        break;
-    case RUIN_RECREATE:
-        ruin_and_recreate_operator(neighbor_buffer, tour, tour_size, generator);
-        break;
+        // HOT PHASE (Exploration): Use weights as defined in the config file.
+        w_ruin_recreate = g_config.sa_weight_ruin_recreate;
+        w_swap = g_config.sa_weight_swap;
+        w_remove_station = g_config.sa_weight_remove_station;
+    }
+    else
+    {
+        // COOL PHASE (Exploitation): Invert the weights of the main operators.
+        // Swap becomes the dominant operator for fine-tuning.
+        w_ruin_recreate = g_config.sa_weight_swap; // Use swap's weight
+        w_swap = g_config.sa_weight_ruin_recreate; // Use R&R's weight
+        w_remove_station = g_config.sa_weight_remove_station; // Stays the same
+    }
+
+    int total_weight = w_ruin_recreate + w_swap + w_remove_station;
+
+    // If all weights are zero, default to one operator to avoid errors.
+    if (total_weight == 0)
+    {
+        ruin_and_recreate_operator(neighbor_buffer, tour, size, generator);
+        return;
+    }
+
+    // Pick a random number in the range of the total weight
+    std::uniform_int_distribution<int> dist(1, total_weight);
+    int p = dist(generator);
+
+    // Select the operator based on the random number and weights
+    if (p <= w_ruin_recreate)
+    {
+        ruin_and_recreate_operator(neighbor_buffer, tour, size, generator);
+    }
+    else if (p <= w_ruin_recreate + w_swap)
+    {
+        swap_operator(neighbor_buffer, tour, size, generator);
+    }
+    else
+    {
+        remove_station_operator(neighbor_buffer, tour, size, generator);
     }
 }
 
@@ -466,12 +555,14 @@ void run_heuristic()
     {
         int neighbor_tour_size = current_tour_size;
 
-        create_neighbor_solution(neighbor_tour, current_tour, current_tour_size, g);
+        create_neighbor_solution(neighbor_tour, current_tour, neighbor_tour_size, g);
 
         // Get the cost of the new solution (which includes repairing it if necessary)
-        double neighbor_energy = get_penalized_cost(neighbor_tour, neighbor_tour_size);
+        double neighbor_energy = get_solution_cost(neighbor_tour, neighbor_tour_size);
 
         // Decide whether to accept the new solution
+        if (neighbor_energy < DBL_MAX)
+        {
             if (neighbor_energy < current_energy)
             {
                 // Always accept better solutions
@@ -492,6 +583,7 @@ void run_heuristic()
                     record_fitness(get_evals(), neighbor_energy);
                 }
             }
+        }
 
         // Update the overall best solution if the current one is better
         if (current_energy < best_sol->tour_length)
@@ -510,11 +602,11 @@ void run_heuristic()
 
     // Cool the temperature after each batch of iterations
     T *= COOLING_RATE;
-    if (iterations_without_improvement >= REHEAT_ITERATION_THRESHOLD)
-    {
-        T = initial_temperature * 0.6;      // Reheat to a high temperature
-        iterations_without_improvement = 0; // Reset the counter
-    }
+    // if (iterations_without_improvement >= REHEAT_ITERATION_THRESHOLD)
+    // {
+    //     T = initial_temperature * 0.6;      // Reheat to a high temperature
+    //     iterations_without_improvement = 0; // Reset the counter
+    // }
 }
 
 void free_heuristic()
