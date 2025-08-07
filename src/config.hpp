@@ -37,6 +37,8 @@ struct Config
     double sa_reheat_threshold;
     int sa_iterations_per_call;
     double sa_adaptive_threshold;
+    int sa_weight_two_opt;
+    double sa_destruction_factor; // ADD THIS
 };
 
 // Global config object

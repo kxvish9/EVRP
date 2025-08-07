@@ -67,6 +67,7 @@ void end_run(int r)
   }
   cout << "End of run " << r << " with best solution quality " << get_current_best() << endl;
   cout << " " << endl;
+  print_operator_stats();
 }
 void open_stats(void)
 {

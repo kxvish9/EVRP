@@ -18,4 +18,5 @@ const char* get_base_filename(const char* path);
 static void create_neighbor_solution(int *neighbor_buffer, const int *tour, int &size, std::mt19937 &generator);
 double get_solution_cost(int *tour, int &size);
 static int find_best_charging_station(int from_node, int to_node, double energy_at_from);
+void print_operator_stats();
 #endif // HEURISTIC_HPP

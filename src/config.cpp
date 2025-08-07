@@ -90,6 +90,14 @@ void load_config(const std::string &filename)
             {
                 g_config.sa_adaptive_threshold = std::stod(value);
             }
+            else if (key == "SA_WEIGHT_TWO_OPT")
+            {
+                g_config.sa_weight_two_opt = std::stoi(value);
+            }
+            else if (key == "SA_DESTRUCTION_FACTOR")
+            {
+                g_config.sa_destruction_factor = std::stod(value);
+            }
         }
     }
 

@@ -11,11 +11,27 @@
 #include <string.h>
 #include "config.hpp"
 using namespace std;
+// ADD THIS: To track which operator was last used
+enum Operator
+{
+    OP_NONE,
+    OP_RUIN_RECREATE,
+    OP_SWAP,
+    OP_REMOVE_STATION,
+    OP_TWO_OPT // ADD THIS
+};
+static Operator last_used_operator = OP_NONE;
 
+// ADD THIS: Counters for operator diagnostics
+// ADD THESE
+static long rr_attempts = 0, swap_attempts = 0, station_attempts = 0, two_opt_attempts = 0;
+static long rr_improvements = 0, swap_improvements = 0, station_improvements = 0, two_opt_improvements = 0; // ADD two_opt_improvements
+static double rr_total_improvement = 0.0, swap_total_improvement = 0.0, station_total_improvement = 0.0, two_opt_total_improvement = 0.0;
 // Global solution object, declared in heuristic.hpp
 solution *best_sol;
 // Global variables to maintain the state of the SA algorithm across multiple calls
 static int *current_tour = nullptr;
+static double g_max_distance = 0.0;
 static int current_tour_size = 0;
 static double current_energy;
 static double T;            // Temperature, loaded from config
@@ -25,15 +41,64 @@ static int ITERATIONS_PER_CALL;
 static std::mt19937 g(std::chrono::high_resolution_clock::now().time_since_epoch().count());
 static double initial_temperature;         // To remember the starting temperature
 static int iterations_without_improvement; // Counter for how long we've been stuck
-static long REHEAT_ITERATION_THRESHOLD;     // Loaded from config
+double REHEAT_ITERATION_THRESHOLD;         // Loaded from config
 // ADDED: Reusable buffers to avoid memory allocation in loops
 static int *neighbor_tour = nullptr;
 static int *repair_buffer = nullptr;
 static double *g_nearest_station_energy_cache = nullptr;
+
 // ADDED: A proper uniform distribution for the acceptance check
 static std::uniform_real_distribution<double> g_unif_dist(0.0, 1.0);
 
 // --- Helper Functions ---
+// ADD THIS FUNCTION
+static void two_opt_operator(int *neighbor_buffer, const int *tour, int size, std::mt19937 &generator)
+{
+    if (size < 6)
+    {
+        std::copy(tour, tour + size, neighbor_buffer);
+        return;
+    }
+
+    std::uniform_int_distribution<int> i_dist(1, size - 4);
+    int i = i_dist(generator);
+
+    std::uniform_int_distribution<int> j_dist(i + 2, size - 2);
+    int j = j_dist(generator);
+
+    // --- SAFEGUARD ---
+    // Check if the segment we are about to reverse contains a station or depot.
+    // If it does, this is a risky move, so we'll just abort.
+    for (int k = i + 1; k <= j; ++k)
+    {
+        if (is_charging_station(tour[k]))
+        {
+            std::copy(tour, tour + size, neighbor_buffer); // Abort: return an unmodified copy
+            return;
+        }
+    }
+
+    std::copy(tour, tour + size, neighbor_buffer);
+    std::reverse(neighbor_buffer + i + 1, neighbor_buffer + j + 1);
+}
+static void reset_operator_stats()
+{
+    // ADD THIS
+    rr_attempts = swap_attempts = station_attempts = two_opt_attempts = 0;
+    rr_improvements = swap_improvements = station_improvements = two_opt_improvements = 0;
+    rr_total_improvement = swap_total_improvement = station_total_improvement = two_opt_total_improvement = 0.0;
+}
+struct RelatedCustomer
+{
+    int tour_index;
+    double relatedness_score;
+
+    // Overload the < operator to allow sorting
+    bool operator<(const RelatedCustomer &other) const
+    {
+        return relatedness_score < other.relatedness_score;
+    }
+};
 static void populate_nearest_station_cache()
 {
     g_nearest_station_energy_cache = new double[ACTUAL_PROBLEM_SIZE];
@@ -138,42 +203,94 @@ static void ruin_and_recreate_operator(int *neighbor_buffer, const int *tour, in
 {
     std::vector<int> temp_tour(tour, tour + size);
 
+    // --- Determine number of customers to remove ---
     int num_customers = 0;
     for (int node : temp_tour)
+    {
         if (!is_charging_station(node))
             num_customers++;
+    }
 
     if (num_customers < 2)
     {
         std::copy(tour, tour + size, neighbor_buffer);
         return;
     }
-    int num_to_remove = std::max(2, static_cast<int>(num_customers * 0.20));
+    int num_to_remove = std::max(2, static_cast<int>(num_customers * g_config.sa_destruction_factor));
 
-    std::vector<int> customer_indices;
+    // --- Start of Optimized Shaw Removal (Ruin Phase) ---
+
+    // 1. Get a list of all customers currently in the tour
+    std::vector<int> customer_tour_indices;
     for (int i = 1; i < temp_tour.size() - 1; ++i)
     {
         if (!is_charging_station(temp_tour[i]))
         {
-            customer_indices.push_back(i);
+            customer_tour_indices.push_back(i);
         }
     }
-    std::shuffle(customer_indices.begin(), customer_indices.end(), generator);
 
-    std::vector<int> removed_customers;
-    std::vector<int> indices_to_remove;
-    for (int i = 0; i < std::min((int)customer_indices.size(), num_to_remove); ++i)
+    if (customer_tour_indices.size() <= num_to_remove)
     {
-        indices_to_remove.push_back(customer_indices[i]);
+        std::copy(tour, tour + size, neighbor_buffer);
+        return;
     }
+
+    // 2. Pick a single random "seed" customer
+    std::uniform_int_distribution<int> dist(0, customer_tour_indices.size() - 1);
+    int seed_list_index = dist(generator);
+    int seed_tour_index = customer_tour_indices[seed_list_index];
+    int seed_node = temp_tour[seed_tour_index];
+
+    customer_tour_indices.erase(customer_tour_indices.begin() + seed_list_index);
+
+    // 3. Calculate relatedness of all other customers to the seed ONCE
+    std::vector<RelatedCustomer> relatedness_list;
+    for (int tour_idx : customer_tour_indices)
+    {
+        int candidate_node = temp_tour[tour_idx];
+
+        double dist_val = get_distance(seed_node, candidate_node);
+        double demand_diff = std::abs(get_customer_demand(seed_node) - get_customer_demand(candidate_node));
+
+        double norm_dist = (g_max_distance > 0) ? (dist_val / g_max_distance) : 0;
+        double norm_demand = (MAX_CAPACITY > 0) ? (demand_diff / MAX_CAPACITY) : 0;
+
+        relatedness_list.push_back({tour_idx,
+                                    (0.6 * norm_dist) + (0.4 * norm_demand)});
+    }
+
+    // 4. Sort the list by relatedness (most related first)
+    std::sort(relatedness_list.begin(), relatedness_list.end());
+
+    // 5. Select which customers to remove with controlled randomness
+    std::vector<int> indices_to_remove;
+    indices_to_remove.push_back(seed_tour_index);
+
+    const double determinism_factor = 3.0;
+    for (int i = 1; i < num_to_remove; ++i)
+    {
+        if (relatedness_list.empty())
+            break;
+
+        double rand_val = std::uniform_real_distribution<double>(0.0, 1.0)(generator);
+        int selection_index = static_cast<int>(std::floor(std::pow(rand_val, determinism_factor) * relatedness_list.size()));
+
+        indices_to_remove.push_back(relatedness_list[selection_index].tour_index);
+        relatedness_list.erase(relatedness_list.begin() + selection_index);
+    }
+
+    // 6. Remove the selected customers from the tour
     std::sort(indices_to_remove.rbegin(), indices_to_remove.rend());
 
+    std::vector<int> removed_customers;
     for (int idx : indices_to_remove)
     {
         removed_customers.push_back(temp_tour[idx]);
         temp_tour.erase(temp_tour.begin() + idx);
     }
 
+    // --- Recreate Phase ---
     for (int customer_to_insert : removed_customers)
     {
         double min_cost_increase = DBL_MAX;
@@ -198,17 +315,17 @@ static void ruin_and_recreate_operator(int *neighbor_buffer, const int *tour, in
             temp_tour.insert(temp_tour.end() - 1, customer_to_insert);
         }
     }
+
+    // --- Final Cleanup and Output ---
     for (size_t i = 0; i + 1 < temp_tour.size();)
     {
         if (temp_tour[i] == temp_tour[i + 1] && is_charging_station(temp_tour[i]))
         {
             temp_tour.erase(temp_tour.begin() + i);
-            // After erasing, don't increment i because we need to re-check
-            // the new element at the current position.
         }
         else
         {
-            i++; // Only move to the next position if no duplicate was found.
+            i++;
         }
     }
     size = temp_tour.size();
@@ -402,6 +519,17 @@ void initialize_heuristic()
         neighbor_tour = new int[ACTUAL_PROBLEM_SIZE * 2];
         repair_buffer = new int[ACTUAL_PROBLEM_SIZE * 2];
         populate_nearest_station_cache();
+        for (int i = 0; i < ACTUAL_PROBLEM_SIZE; ++i)
+        {
+            for (int j = i + 1; j < ACTUAL_PROBLEM_SIZE; ++j)
+            {
+                double d = get_distance(i, j);
+                if (d > g_max_distance)
+                {
+                    g_max_distance = d;
+                }
+            }
+        }
     }
 
     // --- Loop to guarantee a feasible solution is found ---
@@ -432,6 +560,8 @@ void initialize_heuristic()
     REHEAT_ITERATION_THRESHOLD = g_config.sa_reheat_threshold;
     ITERATIONS_PER_CALL = g_config.sa_iterations_per_call;
     iterations_without_improvement = 0;
+    // ADD THIS LINE AT THE END of initialize_heuristic()
+    reset_operator_stats();
 }
 
 static int find_best_charging_station(int from_node, int to_node, double energy_at_from)
@@ -502,7 +632,7 @@ double get_solution_cost(int *tour, int &size)
 static void create_neighbor_solution(int *neighbor_buffer, const int *tour, int &size, std::mt19937 &generator)
 {
     // Get operator weights from the global configuration
-    int w_ruin_recreate, w_swap, w_remove_station;
+    int w_ruin_recreate, w_swap, w_remove_station, w_two_opt;
     double temp_ratio = T / initial_temperature;
 
     if (temp_ratio > g_config.sa_adaptive_threshold)
@@ -511,17 +641,20 @@ static void create_neighbor_solution(int *neighbor_buffer, const int *tour, int 
         w_ruin_recreate = g_config.sa_weight_ruin_recreate;
         w_swap = g_config.sa_weight_swap;
         w_remove_station = g_config.sa_weight_remove_station;
+        w_two_opt = g_config.sa_weight_two_opt;
     }
     else
     {
         // COOL PHASE (Exploitation): Invert the weights of the main operators.
         // Swap becomes the dominant operator for fine-tuning.
-        w_ruin_recreate = g_config.sa_weight_swap; // Use swap's weight
-        w_swap = g_config.sa_weight_ruin_recreate; // Use R&R's weight
-        w_remove_station = g_config.sa_weight_remove_station; // Stays the same
+        w_ruin_recreate = g_config.sa_weight_ruin_recreate / 2; // Use swap's weight
+        w_swap = g_config.sa_weight_swap;                       // Use R&R's weight
+        w_remove_station = g_config.sa_weight_remove_station;   // Stays the same
+        w_two_opt = g_config.sa_weight_two_opt * 4;
     }
 
-    int total_weight = w_ruin_recreate + w_swap + w_remove_station;
+    int total_weight = w_ruin_recreate + w_swap + w_remove_station + w_two_opt;
+    ;
 
     // If all weights are zero, default to one operator to avoid errors.
     if (total_weight == 0)
@@ -535,17 +668,30 @@ static void create_neighbor_solution(int *neighbor_buffer, const int *tour, int 
     int p = dist(generator);
 
     // Select the operator based on the random number and weights
+    // MODIFY THIS BLOCK
     if (p <= w_ruin_recreate)
     {
         ruin_and_recreate_operator(neighbor_buffer, tour, size, generator);
+        last_used_operator = OP_RUIN_RECREATE; // ADD THIS
+        rr_attempts++;                         // ADD THIS
     }
     else if (p <= w_ruin_recreate + w_swap)
     {
         swap_operator(neighbor_buffer, tour, size, generator);
+        last_used_operator = OP_SWAP; // ADD THIS
+        swap_attempts++;              // ADD THIS
+    }
+    else if (p <= w_ruin_recreate + w_swap + w_remove_station)
+    {
+        remove_station_operator(neighbor_buffer, tour, size, generator);
+        last_used_operator = OP_REMOVE_STATION; // ADD THIS
+        station_attempts++;                     // ADD THIS
     }
     else
     {
-        remove_station_operator(neighbor_buffer, tour, size, generator);
+        two_opt_operator(neighbor_buffer, tour, size, generator);
+        last_used_operator = OP_TWO_OPT;
+        two_opt_attempts++;
     }
 }
 
@@ -570,6 +716,7 @@ void run_heuristic()
                 std::copy(neighbor_tour, neighbor_tour + neighbor_tour_size, current_tour);
                 current_energy = neighbor_energy;
                 record_fitness(get_evals(), neighbor_energy);
+                // ADD THIS SWITCH STATEMENT INSIDE the if (neighbor_energy < current_energy) block
             }
             else
             {
@@ -588,10 +735,34 @@ void run_heuristic()
         // Update the overall best solution if the current one is better
         if (current_energy < best_sol->tour_length)
         {
+            double improvement_delta = best_sol->tour_length - current_energy;
             best_sol->tour_length = current_energy;
             std::copy(current_tour, current_tour + current_tour_size, best_sol->tour);
             best_sol->steps = current_tour_size;
             iterations_without_improvement = 0;
+
+            // Then, add this improvement to the correct operator's total
+            switch (last_used_operator)
+            {
+            case OP_RUIN_RECREATE:
+                rr_improvements++;
+                rr_total_improvement += improvement_delta;
+                break;
+            case OP_SWAP:
+                swap_improvements++;
+                swap_total_improvement += improvement_delta;
+                break;
+            case OP_REMOVE_STATION:
+                station_improvements++;
+                station_total_improvement += improvement_delta;
+                break;
+            case OP_TWO_OPT: // ADD THIS CASE
+                two_opt_improvements++;
+                two_opt_total_improvement += improvement_delta;
+                break;
+            default:
+                break;
+            }
         }
         else
         {
@@ -602,12 +773,25 @@ void run_heuristic()
 
     // Cool the temperature after each batch of iterations
     T *= COOLING_RATE;
-    // if (iterations_without_improvement >= REHEAT_ITERATION_THRESHOLD)
-    // {
-    //     T = initial_temperature * 0.6;      // Reheat to a high temperature
-    //     iterations_without_improvement = 0; // Reset the counter
-    // }
+    if (REHEAT_ITERATION_THRESHOLD > 0 && iterations_without_improvement >= REHEAT_ITERATION_THRESHOLD)
+    {
+        // --- NEW REHEAT STRATEGY: Restart from the best-known solution ---
+
+        // 1. Reset the current solution to the best one found so far.
+        std::copy(best_sol->tour, best_sol->tour + best_sol->steps, current_tour);
+        current_tour_size = best_sol->steps;
+        current_energy = best_sol->tour_length;
+
+        // 2. Reheat to a more moderate temperature to explore from this new starting point.
+        T = initial_temperature * 0.4;
+
+        // 3. Reset the counter.
+        iterations_without_improvement = 0;
+
+        // 4. Print a debug message to see it working.
+    }
 }
+// ADD THIS ENTIRE FUNCTION
 
 void free_heuristic()
 {
@@ -633,4 +817,33 @@ void free_heuristic()
     if (neighbor_tour != nullptr)
         delete[] neighbor_tour;
     neighbor_tour = nullptr;
+}
+// ADD THIS FUNCTION
+// REPLACE the entire print_operator_stats function with this:
+void print_operator_stats()
+{
+    printf("\n--- Operator Performance Stats ---\n");
+    printf("Operator          | Attempts | Success (Rate)   | Total Reduction | Avg. Reduction\n");
+    printf("------------------|----------|------------------|-----------------|-----------------\n");
+
+    if (rr_attempts > 0)
+        printf("Ruin & Recreate   | %-8ld | %-5ld (%6.2f%%) | %-15.2f | %-15.2f\n",
+               rr_attempts, rr_improvements, (double)rr_improvements / rr_attempts * 100.0,
+               rr_total_improvement, (rr_improvements > 0) ? rr_total_improvement / rr_improvements : 0.0);
+
+    if (swap_attempts > 0)
+        printf("Swap              | %-8ld | %-5ld (%6.2f%%) | %-15.2f | %-15.2f\n",
+               swap_attempts, swap_improvements, (double)swap_improvements / swap_attempts * 100.0,
+               swap_total_improvement, (swap_improvements > 0) ? swap_total_improvement / swap_improvements : 0.0);
+
+    if (station_attempts > 0)
+        printf("Remove Station    | %-8ld | %-5ld (%6.2f%%) | %-15.2f | %-15.2f\n",
+               station_attempts, station_improvements, (double)station_improvements / station_attempts * 100.0,
+               station_total_improvement, (station_improvements > 0) ? station_total_improvement / station_improvements : 0.0);
+    // In print_operator_stats(), add this block
+    if (two_opt_attempts > 0)
+        printf("2-Opt             | %-8ld | %-5ld (%6.2f%%) | %-15.2f | %-15.2f\n",
+               two_opt_attempts, two_opt_improvements, (double)two_opt_improvements / two_opt_attempts * 100.0,
+               two_opt_total_improvement, (two_opt_improvements > 0) ? two_opt_total_improvement / two_opt_improvements : 0.0);
+    printf("------------------------------------------------------------------------------------\n\n");
 }
